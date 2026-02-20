@@ -3,7 +3,7 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { createServer as createViteServer } from "vite";
 import path from "path";
-import { HERO_CARDS, GEAR_CARDS, SPECIAL_HEROES } from "./src/constants";
+import { HERO_CARDS, GEAR_CARDS, SPECIAL_HEROES, BONUS_CARDS } from "./src/constants";
 import { Phase, StructureType, Rarity, MonsterType } from "./src/types";
 
 async function startServer() {
@@ -60,7 +60,14 @@ async function startServer() {
       specialDeck.push({ ...card });
     });
 
-    return { heroDeck: shuffle(heroDeck), gearDeck: shuffle(gearDeck), specialDeck: shuffle(specialDeck) };
+    // Bonus deck: 2 copies of each bonus card, shuffled
+    const bonusDeck: any[] = [];
+    BONUS_CARDS.forEach(card => {
+      bonusDeck.push({ ...card, id: `${card.id}_0` });
+      bonusDeck.push({ ...card, id: `${card.id}_1` });
+    });
+
+    return { heroDeck: shuffle(heroDeck), gearDeck: shuffle(gearDeck), specialDeck: shuffle(specialDeck), bonusDeck: shuffle(bonusDeck) };
   }
 
   function drawCards(deck: any[], count: number, guaranteeEpic = false) {
@@ -187,7 +194,28 @@ async function startServer() {
           p.finishedPrep = false; // Reset for next round
           p.heroes.forEach((h: any) => h.abilityUsed = false);
           p.gear.forEach((g: any) => g.abilityUsed = false);
+
+          // Reset bonus-card attack trackers for the new round
+          p.earnedBonusThisAttack = false;
+          p.monstersDefeatedThisAttack = 0;
+          p.enemyCapturesThisAttack = 0;
         });
+
+        // Tick down occupation tokens from Forced Occupation bonus cards
+        game.board.forEach((tile: any) => {
+          if (tile.occupationTokenRoundsLeft > 0) {
+            tile.occupationTokenRoundsLeft--;
+            if (tile.occupationTokenRoundsLeft === 0) {
+              const tokenOwner = game.players.find((p: any) => p.id === tile.occupationTokenOwnerId);
+              if (tokenOwner) { tokenOwner.tilesCount--; }
+              tile.occupationTokenOwnerId = null;
+              // If not owned normally, it is no longer occupied
+              if (tile.ownerId === null) tile.isOccupied = false;
+              game.logs.push(`Occupation token on tile ${tile.id} expired.`);
+            }
+          }
+        });
+
         game.logs.push(`Round ${game.round} begins. Preparation phase.`);
       }
     }
@@ -260,6 +288,9 @@ async function startServer() {
           totalSummons: 0,
           color: colors[game.players.length],
           tilesCount: 3,
+          earnedBonusThisAttack: false,
+          monstersDefeatedThisAttack: 0,
+          enemyCapturesThisAttack: 0,
         });
         io.to(roomId).emit("game_updated", game);
       }
@@ -408,11 +439,15 @@ async function startServer() {
       }
 
       if (action.reward.hero) {
-        const barracksCount = game.board.filter((t: any) => t.ownerId === player.id && t.structure === StructureType.BARRACKS).length;
-        const maxHeroes = barracksCount * 3;
-        if (player.heroes.length >= maxHeroes) {
-          game.logs.push(`${player.name} needs more Barracks! (Each holds 3 heroes)`);
-          return;
+        // The very first hero summon of the game (totalSummons === 0) is free of the
+        // barracks requirement. Every subsequent summon still needs barracks capacity.
+        if (player.totalSummons > 0) {
+          const barracksCount = game.board.filter((t: any) => t.ownerId === player.id && t.structure === StructureType.BARRACKS).length;
+          const maxHeroes = barracksCount * 3;
+          if (player.heroes.length >= maxHeroes) {
+            game.logs.push(`${player.name} needs more Barracks! (Each holds 3 heroes)`);
+            return;
+          }
         }
 
         const manaCost = player.summonCountThisRound;
@@ -577,7 +612,7 @@ async function startServer() {
           centerTile.ownerId = winner.id;
           centerTile.structure = StructureType.FLAGPOLE;
           game.logs.push(`BIDDING WAR OVER! ${winner.name} won the bid with a value of ${winner.bidAmount} and planted the Flagpole!`);
-          game.logs.push(`${winner.name} is the Dungeon Overlord!`);
+          game.logs.push(`${winner.name} is the Dungeon Gacha champion!`);
         }
       }
 
@@ -693,6 +728,15 @@ async function startServer() {
           player.tilesCount++;
           player.gemstones += 3;
           game.logs.push(`${player.name} defeated the monster and claimed tile ${tileId}!`);
+
+          // Bonus card: award after 3rd monster kill this attack phase
+          player.monstersDefeatedThisAttack++;
+          if (player.monstersDefeatedThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck && game.bonusDeck.length > 0) {
+            const bonusCard = game.bonusDeck.pop();
+            player.bonusCards.push(bonusCard);
+            player.earnedBonusThisAttack = true;
+            game.logs.push(`${player.name} earned a Bonus Card for liberating 3 monster tiles!`);
+          }
         }
       } else if (tile.ownerId !== null) {
         // Player-owned tile combat (mana cost)
@@ -721,6 +765,15 @@ async function startServer() {
           player.gemstones += 5; // Capture bonus
         }
         game.logs.push(`${player.name} captured ${oldOwner?.name}'s tile ${tileId}!`);
+
+        // Bonus card: award after 3rd enemy tile capture this attack phase
+        player.enemyCapturesThisAttack++;
+        if (player.enemyCapturesThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck && game.bonusDeck.length > 0) {
+          const bonusCard = game.bonusDeck.pop();
+          player.bonusCards.push(bonusCard);
+          player.earnedBonusThisAttack = true;
+          game.logs.push(`${player.name} earned a Bonus Card for capturing 3 enemy tiles!`);
+        }
       }
 
       io.to(roomId).emit("game_updated", game);
@@ -800,6 +853,158 @@ async function startServer() {
         player.tilesCount++;
         player.gemstones += 3;
         game.logs.push(`${player.name} defeated the monster and captured tile ${tileId}!`);
+      }
+
+      io.to(roomId).emit("game_updated", game);
+    });
+
+    socket.on("use_bonus_card", ({ roomId, cardId, tileId, cardToSummonId, structureType }) => {
+      const game = games.get(roomId);
+      if (!game) return;
+
+      const player = game.players.find((p: any) => p.id === socket.id);
+      if (!player) return;
+
+      const cardIdx = player.bonusCards.findIndex((c: any) => c.id === cardId);
+      if (cardIdx === -1) return;
+
+      const card = player.bonusCards[cardIdx];
+      const baseId: string = card.id.replace(/_[01]$/, "");
+
+      // ── Mercenary Contract (prep phase, free) ────────────────────────────────
+      if (baseId === "bc_mercenary") {
+        if (game.status !== Phase.PREPARATION) {
+          game.logs.push("Mercenary Contract can only be used in the Preparation phase."); return;
+        }
+        const heroIdx = player.draftedCards.findIndex((c: any) => c.id === cardToSummonId && c.type === "HERO");
+        if (heroIdx === -1) {
+          game.logs.push(`${player.name} must select a Hero from their drafted hand.`); return;
+        }
+        // 0 mana cost, ignores barracks limit
+        const hero = player.draftedCards.splice(heroIdx, 1)[0];
+        hero.abilityUsed = false;
+        player.heroes.push(hero);
+        player.summonCountThisRound++;
+        player.totalSummons++;
+        if (player.draftedCards.length === 0) {
+          player.draftedCards = drawCards(game.heroDeck, 6);
+          game.logs.push(`${player.name} ran out of cards and drew 6 new ones!`);
+        }
+        player.bonusCards.splice(cardIdx, 1);
+        game.logs.push(`${player.name} played Mercenary Contract and summoned ${hero.name} for free!`);
+      }
+
+      // ── Reinforced Caravan (prep phase, free) ───────────────────────────────
+      else if (baseId === "bc_caravan") {
+        if (game.status !== Phase.PREPARATION) {
+          game.logs.push("Reinforced Caravan can only be used in the Preparation phase."); return;
+        }
+        player.wood += 4;
+        player.clay += 2;
+        player.stone += 1;
+        player.bonusCards.splice(cardIdx, 1);
+        game.logs.push(`${player.name} played Reinforced Caravan and gained 4 Wood, 2 Clay, and 1 Stone!`);
+      }
+
+      // ── Hidden Cache (prep phase, free) ─────────────────────────────────────
+      else if (baseId === "bc_cache") {
+        if (game.status !== Phase.PREPARATION) {
+          game.logs.push("Hidden Cache can only be used in the Preparation phase."); return;
+        }
+        player.gemstones += 15;
+        player.bonusCards.splice(cardIdx, 1);
+        game.logs.push(`${player.name} played Hidden Cache and gained 15 Gemstones!`);
+      }
+
+      // ── Siege Engineering (prep phase, free) ────────────────────────────────
+      else if (baseId === "bc_siege") {
+        if (game.status !== Phase.PREPARATION) {
+          game.logs.push("Siege Engineering can only be used in the Preparation phase."); return;
+        }
+        if (tileId === undefined || tileId === null) {
+          game.logs.push("Select a tile to build on."); return;
+        }
+        const siegeTile = game.board[tileId];
+        if (!siegeTile || siegeTile.ownerId !== player.id || siegeTile.structure || siegeTile.monsterType !== null) {
+          game.logs.push("Siege Engineering requires a clear, owned tile with no existing structure."); return;
+        }
+        const sType = structureType === "MOAT" ? StructureType.MOAT : StructureType.WALL;
+        siegeTile.structure = sType;
+        siegeTile.isOccupied = true;
+        player.bonusCards.splice(cardIdx, 1);
+        game.logs.push(`${player.name} played Siege Engineering and built a ${sType} on tile ${tileId} for free!`);
+      }
+
+      // ── Monster Tamer (attack phase, free) ──────────────────────────────────
+      else if (baseId === "bc_tamer") {
+        if (game.status !== Phase.ATTACK) {
+          game.logs.push("Monster Tamer can only be used in the Attack phase."); return;
+        }
+        if (game.players[game.currentPlayerIndex].id !== player.id) {
+          game.logs.push("It is not your turn."); return;
+        }
+        if (tileId === undefined || tileId === null) {
+          game.logs.push("Select a tile to tame."); return;
+        }
+        const tamerTile = game.board[tileId];
+        if (!tamerTile || tamerTile.monsterType === null) {
+          game.logs.push("Monster Tamer requires a tile with a monster."); return;
+        }
+        // Adjacency check
+        const tx = tileId % 9, ty = Math.floor(tileId / 9);
+        const tNeighbors: number[] = [];
+        if (tx > 0) tNeighbors.push(tileId - 1);
+        if (tx < 8) tNeighbors.push(tileId + 1);
+        if (ty > 0) tNeighbors.push(tileId - 9);
+        if (ty < 8) tNeighbors.push(tileId + 9);
+        if (!tNeighbors.some(n => game.board[n].ownerId === player.id)) {
+          game.logs.push("The target monster must be adjacent to your territory."); return;
+        }
+        const tamerMonsterName = tamerTile.monsterType;
+        tamerTile.monsterType = null;
+        tamerTile.monsterHP = 0;
+        tamerTile.monsterMaxHP = 0;
+        tamerTile.ownerId = player.id;
+        tamerTile.isOccupied = false;
+        player.tilesCount++;
+        player.gemstones += 3; // standard tile reward
+        player.monstersDefeatedThisAttack++;
+        if (player.monstersDefeatedThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck && game.bonusDeck.length > 0) {
+          const bonus = game.bonusDeck.pop();
+          player.bonusCards.push(bonus);
+          player.earnedBonusThisAttack = true;
+          game.logs.push(`${player.name} earned a Bonus Card for liberating 3 monster tiles!`);
+        }
+        player.bonusCards.splice(cardIdx, 1);
+        game.logs.push(`${player.name} played Monster Tamer and instantly defeated the ${tamerMonsterName} on tile ${tileId}!`);
+      }
+
+      // ── Forced Occupation (attack phase, free) ──────────────────────────────
+      else if (baseId === "bc_occupy") {
+        if (game.status !== Phase.ATTACK) {
+          game.logs.push("Forced Occupation can only be used in the Attack phase."); return;
+        }
+        if (game.players[game.currentPlayerIndex].id !== player.id) {
+          game.logs.push("It is not your turn."); return;
+        }
+        if (tileId === undefined || tileId === null) {
+          game.logs.push("Select a tile to occupy."); return;
+        }
+        const occupyTile = game.board[tileId];
+        if (!occupyTile || occupyTile.monsterType !== null || occupyTile.isOccupied) {
+          game.logs.push("Forced Occupation requires a cleared, unoccupied square."); return;
+        }
+        occupyTile.isOccupied = true;
+        occupyTile.occupationTokenOwnerId = player.id;
+        occupyTile.occupationTokenRoundsLeft = 2;
+        player.tilesCount++;
+        player.bonusCards.splice(cardIdx, 1);
+        game.logs.push(`${player.name} played Forced Occupation on tile ${tileId} for 2 rounds!`);
+      }
+
+      else {
+        game.logs.push(`Unknown bonus card: ${card.name}`);
+        return;
       }
 
       io.to(roomId).emit("game_updated", game);
