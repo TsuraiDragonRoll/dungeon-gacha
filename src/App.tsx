@@ -39,17 +39,34 @@ export default function App() {
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [manaAmount, setManaAmount] = useState(1);
   const [showRulebook, setShowRulebook] = useState(false);
+  const [mySocketId, setMySocketId] = useState<string>(socket.id ?? "");
 
   useEffect(() => {
+    // Capture socket ID as soon as it is available (may already be set on mount)
+    if (socket.id) setMySocketId(socket.id);
+    socket.on("connect", () => setMySocketId(socket.id ?? ""));
+    socket.on("reconnect", () => setMySocketId(socket.id ?? ""));
+
     socket.on("game_updated", (state: GameState) => {
       setGameState(state);
     });
+
+    // Server confirmed this socket as a reconnect of an existing player.
+    // Restore their game state and jump straight into the game.
+    socket.on("rejoined", (state: GameState) => {
+      setGameState(state);
+      setJoined(true);
+    });
+
     socket.on("kicked_from_lobby", () => {
       alert("You have been removed from the lobby by the host.");
       window.location.reload();
     });
     return () => {
+      socket.off("connect");
+      socket.off("reconnect");
       socket.off("game_updated");
+      socket.off("rejoined");
       socket.off("kicked_from_lobby");
     };
   }, []);
@@ -244,8 +261,8 @@ export default function App() {
 
   if (!gameState) return <div className="min-h-screen bg-black flex items-center justify-center text-white">Summoning game state...</div>;
 
-  const me = gameState.players.find(p => p.id === socket.id);
-  const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === socket.id;
+  const me = gameState.players.find(p => p.id === mySocketId);
+  const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === mySocketId;
 
   return (
     <div className="min-h-screen bg-[#0a0502] text-white flex flex-col md:flex-row font-sans selection:bg-emerald-500/30">
@@ -276,7 +293,7 @@ export default function App() {
               key={p.id}
               player={p}
               isActive={i === gameState.currentPlayerIndex}
-              isSelf={p.id === socket.id}
+              isSelf={p.id === mySocketId}
             />
           ))}
         </div>
@@ -407,11 +424,11 @@ export default function App() {
               )}
             </div>
           ) : gameState.status === Phase.GAME_OVER ? (
-            <GameOverScreen gameState={gameState} myId={socket.id} roomId={roomId} playerName={playerName} />
+            <GameOverScreen gameState={gameState} myId={mySocketId} roomId={roomId} playerName={playerName} />
           ) : gameState.status === Phase.LOBBY ? (
             <LobbyScreen
               gameState={gameState}
-              myId={socket.id}
+              myId={mySocketId}
               roomId={roomId}
               onStart={handleStart}
             />
@@ -638,6 +655,16 @@ export default function App() {
 
 function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolean; isSelf: boolean }) {
   const [hovered, setHovered] = React.useState(false);
+  const rowRef = React.useRef<HTMLDivElement>(null);
+  const [tooltipPos, setTooltipPos] = React.useState({ top: 0, left: 0 });
+
+  const handleMouseEnter = () => {
+    if (rowRef.current) {
+      const rect = rowRef.current.getBoundingClientRect();
+      setTooltipPos({ top: rect.top, left: rect.right + 8 });
+    }
+    setHovered(true);
+  };
 
   const resources = [
     { label: "Gems", value: player.gemstones, color: "#ef4444", icon: "💎" },
@@ -649,8 +676,9 @@ function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolea
 
   return (
     <div
+      ref={rowRef}
       className="relative"
-      onMouseEnter={() => setHovered(true)}
+      onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setHovered(false)}
     >
       <div className={cn(
@@ -678,8 +706,13 @@ function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolea
             animate={{ opacity: 1, x: 0, scale: 1 }}
             exit={{ opacity: 0, x: -8, scale: 0.95 }}
             transition={{ duration: 0.14 }}
-            className="absolute left-full top-0 ml-2 z-50 pointer-events-none"
-            style={{ minWidth: "160px" }}
+            className="pointer-events-none z-[9999]"
+            style={{
+              position: "fixed",
+              top: tooltipPos.top,
+              left: tooltipPos.left,
+              minWidth: "160px",
+            }}
           >
             <div
               className="rounded-xl border shadow-2xl overflow-hidden"
@@ -1122,6 +1155,8 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
   const { tile, players, onClick, isSelected } = props;
   const owner = players.find(p => p.id === tile.ownerId);
   const [hovered, setHovered] = React.useState(false);
+  const tileRef = React.useRef<HTMLButtonElement>(null);
+  const [tooltipPos, setTooltipPos] = React.useState({ top: 0, left: 0 });
 
   const getMonsterColor = (type: MonsterType | null) => {
     if (type === MonsterType.GOBLIN) return "#10b981";
@@ -1146,10 +1181,20 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
 
   return (
     <motion.button
+      ref={tileRef}
       whileHover={{ scale: 1.05, zIndex: 10 }}
       whileTap={{ scale: 0.95 }}
       onClick={onClick}
-      onHoverStart={() => setHovered(true)}
+      onHoverStart={() => {
+        if (tileRef.current) {
+          const rect = tileRef.current.getBoundingClientRect();
+          setTooltipPos({
+            top: rect.top - 8,   // will be shifted up via translateY(-100%)
+            left: rect.left + rect.width / 2,
+          });
+        }
+        setHovered(true);
+      }}
       onHoverEnd={() => setHovered(false)}
       className={cn(
         "w-8 h-8 md:w-12 md:h-12 rounded-sm flex items-center justify-center relative transition-all",
@@ -1172,6 +1217,7 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
         </div>
       )}
 
+      {/* Monster circle */}
       {tile.monsterType && (
         <div className="relative w-6 h-6 md:w-8 md:h-8 flex items-center justify-center">
           <div className="absolute inset-0 bg-white rounded-full scale-110" />
@@ -1181,61 +1227,54 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
           >
             {tile.monsterHP}
           </div>
-
-          {/* Monster hover tooltip */}
-          <AnimatePresence>
-            {hovered && (
-              <motion.div
-                initial={{ opacity: 0, y: 4, scale: 0.92 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 4, scale: 0.92 }}
-                transition={{ duration: 0.13 }}
-                className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 pointer-events-none"
-                style={{ minWidth: "88px" }}
-              >
-                <div
-                  className="rounded-lg px-2.5 py-2 shadow-2xl border text-center"
-                  style={{
-                    background: `linear-gradient(135deg, #0f0f12 60%, ${monsterColor}22)`,
-                    borderColor: `${monsterColor}55`,
-                    boxShadow: `0 4px 24px 0 ${monsterColor}33`
-                  }}
-                >
-                  {/* Monster type label */}
-                  <div
-                    className="text-[10px] font-extrabold uppercase tracking-widest leading-none mb-1.5"
-                    style={{ color: monsterColor }}
-                  >
-                    {getMonsterLabel(tile.monsterType)}
-                  </div>
-
-                  {/* HP fraction */}
-                  <div className="text-[9px] font-mono font-bold text-white/70 mb-1.5">
-                    ❤ {tile.monsterHP} / {tile.monsterMaxHP}
-                  </div>
-
-                  {/* HP bar */}
-                  <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{
-                        width: `${hpPercent}%`,
-                        backgroundColor: monsterColor,
-                        boxShadow: `0 0 6px ${monsterColor}`
-                      }}
-                    />
-                  </div>
-                </div>
-                {/* Tooltip caret */}
-                <div
-                  className="mx-auto w-2 h-2 rotate-45 -mt-1"
-                  style={{ backgroundColor: "#0f0f12", borderRight: `1px solid ${monsterColor}55`, borderBottom: `1px solid ${monsterColor}55` }}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
       )}
+
+      {/* Monster hover tooltip — fixed-positioned to escape overflow:hidden on grid cells */}
+      <AnimatePresence>
+        {hovered && tile.monsterType && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.92 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.92 }}
+            transition={{ duration: 0.13 }}
+            className="pointer-events-none z-[9999]"
+            style={{
+              position: "fixed",
+              top: tooltipPos.top,
+              left: tooltipPos.left,
+              transform: "translate(-50%, -100%)",
+              minWidth: "88px",
+            }}
+          >
+            <div
+              className="rounded-lg px-2.5 py-2 shadow-2xl border text-center"
+              style={{
+                background: `linear-gradient(135deg, #0f0f12 60%, ${monsterColor}22)`,
+                borderColor: `${monsterColor}55`,
+                boxShadow: `0 4px 24px 0 ${monsterColor}33`
+              }}
+            >
+              <div className="text-[10px] font-extrabold uppercase tracking-widest leading-none mb-1.5" style={{ color: monsterColor }}>
+                {getMonsterLabel(tile.monsterType)}
+              </div>
+              <div className="text-[9px] font-mono font-bold text-white/70 mb-1.5">
+                ❤ {tile.monsterHP} / {tile.monsterMaxHP}
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${hpPercent}%`, backgroundColor: monsterColor, boxShadow: `0 0 6px ${monsterColor}` }}
+                />
+              </div>
+            </div>
+            <div
+              className="mx-auto w-2 h-2 rotate-45 -mt-1"
+              style={{ backgroundColor: "#0f0f12", borderRight: `1px solid ${monsterColor}55`, borderBottom: `1px solid ${monsterColor}55` }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Liberated tile indicator: owned, no monster, not occupied */}
       {tile.ownerId && !tile.monsterType && !tile.isOccupied && (
@@ -1243,12 +1282,7 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
           className="absolute top-0 left-0 w-3.5 h-3.5 flex items-center justify-center rounded-br-sm pointer-events-none z-10"
           style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
         >
-          <span
-            className="text-[8px] font-black leading-none"
-            style={{ color: "#ef4444", textShadow: "0 0 4px #ef4444aa" }}
-          >
-            !
-          </span>
+          <span className="text-[8px] font-black leading-none" style={{ color: "#ef4444", textShadow: "0 0 4px #ef4444aa" }}>!</span>
         </div>
       )}
 
