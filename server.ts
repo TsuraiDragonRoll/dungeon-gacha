@@ -230,11 +230,53 @@ async function startServer() {
     socket.on("join_game", ({ roomId, playerName }) => {
       socket.join(roomId);
 
-      // If the room exists but the game is already over, wipe it so a fresh lobby starts.
+      // Resolve client IP (handles reverse proxies like Render/Nginx)
+      const rawIp = (socket.handshake.headers["x-forwarded-for"] as string)
+        || socket.handshake.address
+        || "";
+      const clientIp = rawIp.split(",")[0].trim();
+
+      // ── REJOIN CHECK ──────────────────────────────────────────────────────────
+      // If the game exists (in any non-GAME_OVER phase) and a player with the same
+      // name AND IP is found, treat this as a reconnect — update their socket ID
+      // and restore their session without touching game state.
+      if (games.has(roomId)) {
+        const existingGame = games.get(roomId);
+        if (existingGame.status !== Phase.GAME_OVER) {
+          const disconnectedPlayer = existingGame.players.find(
+            (p: any) => p.name === playerName && p.ip === clientIp
+          );
+          if (disconnectedPlayer) {
+            const oldId = disconnectedPlayer.id;
+            disconnectedPlayer.id = socket.id;
+            existingGame.logs.push(`${playerName} reconnected.`);
+            // Move them into the socket room so they receive future broadcasts
+            socket.join(roomId);
+            // Tell the reconnecting client their state is restored
+            socket.emit("rejoined", existingGame);
+            // Tell everyone else the player is back
+            io.to(roomId).emit("game_updated", existingGame);
+            return;
+          }
+
+          // Also guard: if the player's current socket ID is still active (same tab),
+          // don't add them as a duplicate.
+          const alreadyActive = existingGame.players.find(
+            (p: any) => p.id === socket.id
+          );
+          if (alreadyActive) {
+            socket.emit("rejoined", existingGame);
+            return;
+          }
+        }
+      }
+
+      // ── GAME OVER RESET ───────────────────────────────────────────────────────
       if (games.has(roomId) && games.get(roomId).status === Phase.GAME_OVER) {
         games.delete(roomId);
       }
 
+      // ── CREATE ROOM ───────────────────────────────────────────────────────────
       if (!games.has(roomId)) {
         games.set(roomId, {
           id: roomId,
@@ -275,11 +317,13 @@ async function startServer() {
         });
       }
 
+      // ── ADD NEW PLAYER ────────────────────────────────────────────────────────
       const game = games.get(roomId);
       if (game.players.length < game.maxPlayers && game.status === Phase.LOBBY) {
         const colors = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b"];
         game.players.push({
           id: socket.id,
+          ip: clientIp,           // stored for future reconnect identification
           name: playerName,
           gemstones: 6,
           mana: 0,
@@ -307,6 +351,7 @@ async function startServer() {
         io.to(roomId).emit("game_updated", game);
       }
     });
+
 
     socket.on("kick_player", ({ roomId, targetId }) => {
       const game = games.get(roomId);
@@ -393,18 +438,9 @@ async function startServer() {
 
       const card = player.draftHand.splice(cardIndex, 1)[0];
 
-      // Card upgrades: check if player already has this card (summoned or drafted)
-      const existingInDraft = player.draftedCards.find((c: any) => c.name === card.name);
-      const existingInHeroes = player.heroes.find((h: any) => h.name === card.name);
-      const existingCard = existingInDraft || existingInHeroes;
-
-      if (existingCard) {
-        existingCard.level = Math.min(2, existingCard.level + 1);
-        game.logs.push(`${player.name} upgraded ${card.name} to Level ${existingCard.level}!`);
-      } else {
-        player.draftedCards.push(card);
-        game.logs.push(`${player.name} drafted ${card.name}.`);
-      }
+      // Always push to draftedCards — levelling only happens on summon, not on draft.
+      player.draftedCards.push(card);
+      game.logs.push(`${player.name} drafted ${card.name}.`);
 
       // Player is ready after picking any card (enables pick-and-pass rotation)
       player.ready = true;
@@ -520,7 +556,16 @@ async function startServer() {
 
         const card = player.draftedCards.splice(cardIdx, 1)[0];
         card.abilityUsed = false;
-        player.heroes.push(card);
+
+        // Level up on summon: if a hero with this name is already active, upgrade it instead
+        const existingHero = player.heroes.find((h: any) => h.name === card.name);
+        if (existingHero) {
+          existingHero.level = Math.min(2, existingHero.level + 1);
+          game.logs.push(`${player.name} summoned ${card.name} again — upgraded to Level ${existingHero.level}!`);
+        } else {
+          player.heroes.push(card);
+          game.logs.push(`${player.name} summoned ${card.name}!`);
+        }
 
         if (player.totalSummons % 10 === 0) {
           const barracksCount = game.board.filter((t: any) => t.ownerId === player.id && t.structure === StructureType.BARRACKS).length;
