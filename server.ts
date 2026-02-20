@@ -1,0 +1,838 @@
+import express from "express";
+import { createServer } from "http";
+import { Server } from "socket.io";
+import { createServer as createViteServer } from "vite";
+import path from "path";
+import { HERO_CARDS, GEAR_CARDS, SPECIAL_HEROES } from "./src/constants";
+import { Phase, StructureType, Rarity, MonsterType } from "./src/types";
+
+async function startServer() {
+  const app = express();
+  const httpServer = createServer(app);
+  const io = new Server(httpServer, {
+    cors: { origin: "*" },
+  });
+
+  const PORT = 3000;
+  const games = new Map<string, any>();
+
+  function shuffle(array: any[]) {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+  }
+
+  function getMonsterForTile(tileId: number) {
+    const size = 9;
+    const x = tileId % size;
+    const y = Math.floor(tileId / size);
+    const center = 4;
+    const dist = Math.max(Math.abs(x - center), Math.abs(y - center));
+
+    if (dist === 0) return { type: MonsterType.DEMON_KING, hp: 22 };
+    if (dist === 1) return { type: MonsterType.DRAGON, hp: 14 };
+    if (dist === 2) return { type: MonsterType.GIANT, hp: 8 };
+    if (dist === 3) return { type: MonsterType.ORC, hp: 5 };
+    return { type: MonsterType.GOBLIN, hp: 2 };
+  }
+
+  function createDecks() {
+    const heroDeck: any[] = [];
+    HERO_CARDS.forEach(card => {
+      let count = 0;
+      if (card.rarity === Rarity.NORMAL) count = 2;
+      if (card.rarity === Rarity.EPIC) count = 2;
+      if (card.rarity === Rarity.LEGENDARY) count = 2;
+      for (let i = 0; i < count; i++) {
+        heroDeck.push({ ...card, id: `${card.id}_${i}` });
+      }
+    });
+    
+    const gearDeck: any[] = [];
+    GEAR_CARDS.forEach(card => {
+      gearDeck.push({ ...card });
+    });
+
+    const specialDeck: any[] = [];
+    SPECIAL_HEROES.forEach(card => {
+      specialDeck.push({ ...card });
+    });
+
+    return { heroDeck: shuffle(heroDeck), gearDeck: shuffle(gearDeck), specialDeck: shuffle(specialDeck) };
+  }
+
+  function drawCards(deck: any[], count: number, guaranteeEpic = false) {
+    const hand: any[] = [];
+    if (guaranteeEpic) {
+      const epicIdx = deck.findIndex(c => c.rarity === Rarity.EPIC);
+      if (epicIdx !== -1) {
+        hand.push(deck.splice(epicIdx, 1)[0]);
+        count--;
+      }
+    }
+    for (let i = 0; i < count; i++) {
+      if (deck.length > 0) {
+        hand.push(deck.pop());
+      }
+    }
+    return hand;
+  }
+
+  function getStartingTiles(playerIndex: number) {
+    // 9x9 grid, center of 4 sides
+    // Sides: 0: Top, 1: Right, 2: Bottom, 3: Left
+    const center = 4;
+    const size = 9;
+    if (playerIndex === 0) return [center - 1, center, center + 1]; // Top (3, 4, 5)
+    if (playerIndex === 1) return [(center - 1) * size + 8, center * size + 8, (center + 1) * size + 8]; // Right (35, 44, 53)
+    if (playerIndex === 2) return [8 * size + center - 1, 8 * size + center, 8 * size + center + 1]; // Bottom (75, 76, 77)
+    if (playerIndex === 3) return [(center - 1) * size, center * size, (center + 1) * size]; // Left (27, 36, 45)
+    return [];
+  }
+
+  function calculateIncome(tilesCount: number) {
+    if (tilesCount >= 3 && tilesCount <= 5) return tilesCount * 4;
+    if (tilesCount >= 6 && tilesCount <= 10) return tilesCount * 3;
+    if (tilesCount >= 11 && tilesCount <= 17) return tilesCount * 2;
+    if (tilesCount >= 18) return tilesCount * 1;
+    return 0;
+  }
+
+  function advanceTurn(game: any) {
+    if (game.status === Phase.PREPARATION) {
+      let nextIndex = (game.currentPlayerIndex + 1) % game.players.length;
+      let count = 0;
+      while (game.players[nextIndex].finishedPrep && count < game.players.length) {
+        nextIndex = (nextIndex + 1) % game.players.length;
+        count++;
+      }
+
+      if (game.players.every((p: any) => p.finishedPrep)) {
+        game.status = Phase.ATTACK;
+        game.currentPlayerIndex = 0;
+        
+        // Monster reclamation logic
+        game.board.forEach((tile: any) => {
+          if (!tile.isOccupied && tile.ownerId !== null) {
+            const player = game.players.find((p: any) => p.id === tile.ownerId);
+            if (player) player.tilesCount--;
+            
+            const monster = getMonsterForTile(tile.id);
+            tile.ownerId = null;
+            tile.structure = null;
+            tile.monsterType = monster.type;
+            tile.monsterHP = monster.hp;
+            tile.monsterMaxHP = monster.hp;
+            game.logs.push(`Monster reclaimed tile ${tile.id}!`);
+          }
+        });
+
+        game.players.forEach(p => {
+          p.summonCountThisRound = 0;
+        });
+
+        game.logs.push("All players finished preparation. Attack phase begins!");
+        
+        // Mana Ring Gear
+        game.players.forEach(p => {
+          if (p.gear.some((g: any) => g.id === "g_ring")) {
+            p.mana += 1;
+          }
+        });
+      } else {
+        game.currentPlayerIndex = nextIndex;
+      }
+    } else if (game.status === Phase.ATTACK) {
+      game.currentPlayerIndex = (game.currentPlayerIndex + 1) % game.players.length;
+      if (game.currentPlayerIndex === 0) {
+        game.status = Phase.PREPARATION;
+        game.round++;
+        
+        game.board.forEach((tile: any) => {
+          // Tiles with structures are always occupied.
+          // Starting tiles are also always occupied.
+          const isStartingTile = game.players.some((_: any, idx: number) => getStartingTiles(idx).includes(tile.id));
+          tile.isOccupied = tile.structure !== null || isStartingTile || !!tile.occupiedByHeroId;
+        });
+
+        game.actionSpaces.forEach((a: any) => {
+          a.used = false;
+          if (a.id === "p_lumber") a.reward.wood += 4;
+          if (a.id === "p_clay") a.reward.clay += 1;
+          if (a.id === "p_stone") a.reward.stone += 1;
+          if (a.id === "s_lumber") a.reward.wood += 2;
+          if (a.id === "s_stone") a.reward.stone += 1;
+        });
+
+        // Add secondary actions if not already present (for 3+ players)
+        if (game.players.length >= 3 && !game.actionSpaces.some((a: any) => a.id === "s_lumber")) {
+          game.actionSpaces.push(
+            { id: "s_lumber", used: false, type: "SECONDARY", label: "Purchase Lumber (2)", cost: 6, reward: { wood: 2 } },
+            { id: "s_stone", used: false, type: "SECONDARY", label: "Purchase Stone (1)", cost: 6, reward: { stone: 1 } },
+            { id: "s_up_wall", used: false, type: "SECONDARY", label: "Upgrade Wall (1 Stone)", cost: 10, reward: { upgrade: "WALL" } },
+            { id: "s_up_moat", used: false, type: "SECONDARY", label: "Upgrade Moat", cost: 4, reward: { upgrade: "MOAT" } }
+          );
+        }
+
+        game.players.forEach((p: any) => {
+          p.gemstones += calculateIncome(p.tilesCount);
+          
+          // Tax Box Gear
+          if (p.gear.some((g: any) => g.id === "g_taxbox")) {
+            p.gemstones += p.tilesCount;
+          }
+
+          p.finishedPrep = false; // Reset for next round
+          p.heroes.forEach((h: any) => h.abilityUsed = false);
+          p.gear.forEach((g: any) => g.abilityUsed = false);
+        });
+        game.logs.push(`Round ${game.round} begins. Preparation phase.`);
+      }
+    }
+  }
+
+  io.on("connection", (socket) => {
+    socket.on("join_game", ({ roomId, playerName }) => {
+      socket.join(roomId);
+      if (!games.has(roomId)) {
+        games.set(roomId, {
+          id: roomId,
+          status: Phase.LOBBY,
+          players: [],
+          board: Array(81).fill(null).map((_, i) => {
+            const monster = getMonsterForTile(i);
+            return {
+              id: i,
+              ownerId: null,
+              structure: null,
+              level: 1,
+              monsterType: monster.type,
+              monsterHP: monster.hp,
+              monsterMaxHP: monster.hp,
+              isOccupied: false,
+            };
+          }),
+          currentPlayerIndex: 0,
+          round: 1,
+          logs: [],
+          actionSpaces: [
+            { id: "p_lumber", used: false, type: "PRIMARY", label: "Purchase Lumber (4)", cost: 6, reward: { wood: 4 } },
+            { id: "p_clay", used: false, type: "PRIMARY", label: "Purchase Clay (1)", cost: 6, reward: { clay: 1 } },
+            { id: "p_stone", used: false, type: "PRIMARY", label: "Purchase Stone (1)", cost: 6, reward: { stone: 1 } },
+            { id: "p_mana1", used: false, type: "PRIMARY", label: "Generate Mana (1:2)", cost: 2, reward: { mana: 1 } },
+            { id: "p_mana2", used: false, type: "PRIMARY", label: "Generate Mana (1:2)", cost: 2, reward: { mana: 1 } },
+            { id: "p_wall", used: false, type: "PRIMARY", label: "Build Wall (2 Wood)", cost: 10, reward: { structure: StructureType.WALL } },
+            { id: "p_moat", used: false, type: "PRIMARY", label: "Dig Moat", cost: 5, reward: { structure: StructureType.MOAT } },
+            { id: "p_barracks", used: false, type: "PRIMARY", label: "Build Barracks (6W, 2C)", cost: 10, reward: { structure: StructureType.BARRACKS } },
+            { id: "p_summon", used: false, type: "PRIMARY", label: "Summon Hero", cost: 8, reward: { hero: true } },
+            { id: "p_smithy", used: false, type: "PRIMARY", label: "Build Smithy (1C, 2S)", cost: 10, reward: { structure: StructureType.SMITHY } },
+            { id: "p_gear", used: false, type: "PRIMARY", label: "Create Gear", cost: 8, reward: { gear: true } },
+            { id: "p_flag", used: false, type: "PRIMARY", label: "Build Flagpole (Center)", cost: 0, reward: { flag: true } },
+          ],
+          ...createDecks()
+        });
+      }
+
+      const game = games.get(roomId);
+      if (game.players.length < 4 && game.status === Phase.LOBBY) {
+        const colors = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b"];
+        game.players.push({
+          id: socket.id,
+          name: playerName,
+          gemstones: 6,
+          mana: 0,
+          wood: 0,
+          clay: 0,
+          stone: 0,
+          heroes: [],
+          gear: [],
+          bonusCards: [],
+          ready: false,
+          draftHand: [],
+          draftedCards: [],
+          draftedHero: false,
+          draftedGear: false,
+          finishedPrep: false,
+          usedFreeSummon: false,
+          summonCountThisRound: 0,
+          totalSummons: 0,
+          color: colors[game.players.length],
+          tilesCount: 3,
+        });
+        io.to(roomId).emit("game_updated", game);
+      }
+    });
+
+    socket.on("start_game", (roomId) => {
+      const game = games.get(roomId);
+      if (game && game.players.length >= 2) {
+        game.status = Phase.DRAFTING;
+        
+        // Setup starting tiles
+        game.players.forEach((p: any, idx: number) => {
+          const tiles = getStartingTiles(idx);
+          tiles.forEach(tId => {
+            game.board[tId].ownerId = p.id;
+            game.board[tId].monsterType = null;
+            game.board[tId].monsterHP = 0;
+            game.board[tId].monsterMaxHP = 0;
+            game.board[tId].isOccupied = true;
+            if (tId === tiles[0]) game.board[tId].structure = StructureType.GATE;
+          });
+        });
+
+        // Initialize drafting hands
+        game.players.forEach((p: any) => {
+          p.draftHand = drawCards(game.heroDeck, 6, true);
+        });
+
+        game.logs.push("Game started! Drafting phase begins.");
+
+        if (game.players.length >= 3) {
+          game.actionSpaces.push({ id: "p_summon2", used: false, type: "PRIMARY", label: "Summon Hero (2)", cost: 8, reward: { hero: true } });
+        }
+
+        io.to(roomId).emit("game_updated", game);
+      }
+    });
+
+    socket.on("draft_card", ({ roomId, cardId }) => {
+      const game = games.get(roomId);
+      if (!game) return;
+
+      const player = game.players.find((p: any) => p.id === socket.id);
+      if (!player || player.ready) return;
+
+      const cardIndex = player.draftHand.findIndex((c: any) => c.id === cardId);
+      if (cardIndex === -1) return;
+
+      const card = player.draftHand.splice(cardIndex, 1)[0];
+      
+      // Card upgrades: check if player already has this card (summoned or drafted)
+      const existingInDraft = player.draftedCards.find((c: any) => c.name === card.name);
+      const existingInHeroes = player.heroes.find((h: any) => h.name === card.name);
+      const existingCard = existingInDraft || existingInHeroes;
+      
+      if (existingCard) {
+        existingCard.level = Math.min(2, existingCard.level + 1);
+        game.logs.push(`${player.name} upgraded ${card.name} to Level ${existingCard.level}!`);
+      } else {
+        player.draftedCards.push(card);
+        game.logs.push(`${player.name} drafted ${card.name}.`);
+      }
+
+      // Player is ready after picking any card (enables pick-and-pass rotation)
+      player.ready = true;
+
+      if (game.players.every((p: any) => p.ready)) {
+        // All players finished drafting this round, rotate hands
+        const hands = game.players.map((p: any) => p.draftHand);
+        game.players.forEach((p: any, i: number) => {
+          p.draftHand = hands[(i + 1) % hands.length];
+          p.ready = p.draftHand.length === 0; // Ready for next round if hand is empty
+        });
+
+        if (game.players.every((p: any) => p.ready)) {
+          // All players have empty hands, drafting is complete
+          game.status = Phase.PREPARATION;
+          game.currentPlayerIndex = 0;
+          game.players.forEach((p: any) => {
+            p.ready = false; // Reset ready for prep phase
+            p.gemstones += calculateIncome(p.tilesCount);
+            p.finishedPrep = false;
+          });
+          game.logs.push("Drafting complete. Preparation phase begins.");
+        } else {
+          // Not all players have empty hands, continue drafting
+          game.players.forEach(p => p.ready = false); // Reset ready for next draft pick
+        }
+      }
+      io.to(roomId).emit("game_updated", game);
+    });
+
+    socket.on("prep_action", ({ roomId, actionId, tileId, cardId, amount }) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.PREPARATION) return;
+
+      const player = game.players[game.currentPlayerIndex];
+      if (player.id !== socket.id) return;
+
+      const action = game.actionSpaces.find((a: any) => a.id === actionId);
+      if (!action || action.used) return;
+
+      let finalCost = action.cost;
+      let manaAmount = 1;
+
+      if (action.reward.hero && player.gear.some((g: any) => g.id === "g_contract")) {
+        finalCost = Math.max(0, finalCost - 3);
+      }
+      if (action.reward.gear && player.gear.some((g: any) => g.id === "g_smithytools")) {
+        finalCost = Math.max(0, finalCost - 3);
+      }
+
+      if (actionId.includes("mana")) {
+        manaAmount = Math.max(1, Math.floor(Number(amount) || 1));
+        finalCost = manaAmount * 2;
+      }
+
+      if (player.gemstones < finalCost) return;
+
+      // Handle specific requirements
+      if (actionId === "p_wall" && player.wood < 2) return;
+      if (actionId === "p_barracks" && (player.wood < 6 || player.clay < 2)) return;
+      if (actionId === "p_smithy" && (player.clay < 1 || player.stone < 2)) return;
+      
+      // New requirements
+      if (action.reward.gear) {
+        const hasSmithy = game.board.some((t: any) => t.ownerId === player.id && t.structure === StructureType.SMITHY);
+        if (!hasSmithy) {
+          game.logs.push(`${player.name} needs a Smithy to create Gear!`);
+          return;
+        }
+        
+        const cardIdx = player.draftedCards.findIndex((c: any) => c.id === cardId && c.type === "GEAR");
+        if (cardIdx === -1) {
+          game.logs.push(`${player.name} must select a Gear card from their drafted hand!`);
+          return;
+        }
+        const card = player.draftedCards.splice(cardIdx, 1)[0];
+        card.abilityUsed = false;
+        player.gear.push(card);
+
+        if (player.draftedCards.length === 0) {
+          player.draftedCards = drawCards(game.heroDeck, 6);
+          game.logs.push(`${player.name} ran out of cards and drew 6 new ones!`);
+        }
+      }
+
+      if (action.reward.hero) {
+        const barracksCount = game.board.filter((t: any) => t.ownerId === player.id && t.structure === StructureType.BARRACKS).length;
+        const maxHeroes = barracksCount * 3;
+        if (player.heroes.length >= maxHeroes) {
+          game.logs.push(`${player.name} needs more Barracks! (Each holds 3 heroes)`);
+          return;
+        }
+
+        const manaCost = player.summonCountThisRound;
+        if (player.mana < manaCost) {
+          game.logs.push(`${player.name} needs ${manaCost} mana to summon another hero!`);
+          return;
+        }
+
+        const cardIdx = player.draftedCards.findIndex((c: any) => c.id === cardId && c.type === "HERO");
+        if (cardIdx === -1) {
+          game.logs.push(`${player.name} must select a Hero card from their drafted hand!`);
+          return;
+        }
+
+        player.mana -= manaCost;
+        player.summonCountThisRound++;
+        player.totalSummons++;
+
+        const card = player.draftedCards.splice(cardIdx, 1)[0];
+        card.abilityUsed = false;
+        player.heroes.push(card);
+
+        if (player.totalSummons % 10 === 0) {
+          const barracksCount = game.board.filter((t: any) => t.ownerId === player.id && t.structure === StructureType.BARRACKS).length;
+          const maxHeroes = barracksCount * 3;
+          
+          if (player.heroes.length < maxHeroes) {
+            const specialHero = game.specialDeck.pop();
+            if (specialHero) {
+              player.heroes.push(specialHero);
+              game.logs.push(`${player.name} summoned their 10th hero and received ${specialHero.name}!`);
+            }
+          } else {
+            game.logs.push(`${player.name} reached the 10th summon but has no room for a Special Hero!`);
+          }
+        }
+
+        if (player.draftedCards.length === 0) {
+          player.draftedCards = drawCards(game.heroDeck, 6);
+          game.logs.push(`${player.name} ran out of cards and drew 6 new ones!`);
+        }
+      }
+
+      if (action.reward.flag) {
+        const centerTile = game.board[40];
+        if (centerTile.monsterType !== null) {
+          game.logs.push("The center square must be cleared of monsters to build the Flagpole!");
+          return;
+        }
+        
+        game.status = Phase.BIDDING_WAR;
+        game.logs.push("The Flagpole Bidding War has commenced!");
+        game.players.forEach(p => p.ready = false);
+        io.to(roomId).emit("game_updated", game);
+        return;
+      }
+      
+      // Execute action
+      player.gemstones -= finalCost;
+      if (action.reward.wood) player.wood += action.reward.wood;
+      if (action.reward.clay) player.clay += action.reward.clay;
+      if (action.reward.stone) player.stone += action.reward.stone;
+      if (action.reward.mana) player.mana += manaAmount;
+
+      if (action.reward.structure) {
+        const tile = game.board[tileId];
+        if (tile && tile.ownerId === player.id && !tile.structure) {
+          // If occupied by a hero, free the hero
+          if (tile.occupiedByHeroId) {
+            const hero = player.heroes.find((h: any) => h.id === tile.occupiedByHeroId);
+            if (hero) {
+              hero.abilityUsed = false;
+              game.logs.push(`${hero.name} is no longer needed to occupy tile ${tileId} as a structure was built.`);
+            }
+            tile.occupiedByHeroId = null;
+          }
+          tile.structure = action.reward.structure;
+          tile.isOccupied = true;
+          if (actionId === "p_wall") player.wood -= 2;
+          if (actionId === "p_barracks") { player.wood -= 6; player.clay -= 2; }
+          if (actionId === "p_smithy") { player.clay -= 1; player.stone -= 2; }
+        } else {
+          player.gemstones += action.cost; // Refund
+          return;
+        }
+      }
+
+      action.used = true;
+      game.logs.push(`${player.name} performed: ${action.label}`);
+      
+      advanceTurn(game);
+      
+      io.to(roomId).emit("game_updated", game);
+    });
+
+    socket.on("finish_prep", (roomId) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.PREPARATION) return;
+
+      const player = game.players.find((p: any) => p.id === socket.id);
+      if (!player || player.finishedPrep) return;
+
+      player.finishedPrep = true;
+      game.logs.push(`${player.name} has finished their preparation.`);
+
+      // If it was their turn, advance it
+      if (game.players[game.currentPlayerIndex].id === socket.id) {
+        advanceTurn(game);
+      } else if (game.players.every((p: any) => p.finishedPrep)) {
+        // Even if it wasn't their turn, check if everyone is done
+        game.status = Phase.ATTACK;
+        game.currentPlayerIndex = 0;
+        game.logs.push("All players finished preparation. Attack phase begins!");
+      }
+
+      io.to(roomId).emit("game_updated", game);
+    });
+
+    socket.on("submit_bid", ({ roomId }) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.BIDDING_WAR) return;
+
+      const player = game.players.find((p: any) => p.id === socket.id);
+      if (!player || player.ready) return;
+
+      // Check if they can afford the minimum bid: all gemstones, 3 lumber, 1 stone
+      if (player.wood < 3 || player.stone < 1) {
+        player.bidAmount = -1; // Cannot win
+      } else {
+        // Calculate bid value
+        let value = player.gemstones;
+        // King's Decree bonus
+        if (player.gear.some((g: any) => g.id === "g_decree")) {
+          value += 10;
+        }
+        player.bidAmount = value;
+      }
+
+      player.ready = true;
+
+      if (game.players.every((p: any) => p.ready)) {
+        // Sort by bid value, then raw gemstones as tie-breaker, then id for determinism
+        const sorted = [...game.players].sort((a, b) => {
+          const valA = a.bidAmount || 0;
+          const valB = b.bidAmount || 0;
+          if (valB !== valA) return valB - valA;
+          if (b.gemstones !== a.gemstones) return b.gemstones - a.gemstones;
+          return a.id.localeCompare(b.id);
+        });
+        const winner = sorted[0];
+        
+        if (winner.bidAmount === -1) {
+          game.logs.push("No one could afford the Bidding War requirements! The game continues.");
+          game.status = Phase.PREPARATION;
+          game.players.forEach(p => {
+            p.ready = false;
+            p.bidAmount = undefined;
+          });
+        } else {
+          game.status = Phase.GAME_OVER;
+          const centerTile = game.board[40];
+          centerTile.ownerId = winner.id;
+          centerTile.structure = StructureType.FLAGPOLE;
+          game.logs.push(`BIDDING WAR OVER! ${winner.name} won the bid with a value of ${winner.bidAmount} and planted the Flagpole!`);
+          game.logs.push(`${winner.name} is the Dungeon Overlord!`);
+        }
+      }
+
+      io.to(roomId).emit("game_updated", game);
+    });
+
+    socket.on("attack_tile", ({ roomId, tileId, heroId }) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.ATTACK) return;
+
+      const player = game.players[game.currentPlayerIndex];
+      if (player.id !== socket.id) return;
+
+      const tile = game.board[tileId];
+      
+      // Handle 'Occupy' ability on owned tiles
+      if (tile.ownerId === player.id) {
+        const hero = player.heroes.find((h: any) => h.id === heroId);
+        if (!hero) return;
+
+        // Toggle off if already occupied by THIS hero
+        if (tile.occupiedByHeroId === heroId) {
+          tile.occupiedByHeroId = null;
+          hero.abilityUsed = false;
+          
+          // Recalculate isOccupied based on structures or starting tiles
+          const playerIdx = game.players.findIndex((p: any) => p.id === player.id);
+          const isStartingTile = getStartingTiles(playerIdx).includes(tileId);
+          tile.isOccupied = tile.structure !== null || isStartingTile;
+          
+          game.logs.push(`${player.name}'s ${hero.name} stopped occupying tile ${tileId}.`);
+          io.to(roomId).emit("game_updated", game);
+          return;
+        }
+
+        // Occupy if not used and hero has ability
+        if (!hero.abilityUsed && hero.ability.toLowerCase().includes("occupy")) {
+          // If already occupied by another hero, free that hero first
+          if (tile.occupiedByHeroId) {
+            const otherHero = player.heroes.find((h: any) => h.id === tile.occupiedByHeroId);
+            if (otherHero) otherHero.abilityUsed = false;
+          }
+
+          tile.isOccupied = true;
+          tile.occupiedByHeroId = heroId;
+          hero.abilityUsed = true;
+          game.logs.push(`${player.name}'s ${hero.name} occupied tile ${tileId}.`);
+          io.to(roomId).emit("game_updated", game);
+        }
+        return;
+      }
+
+      // Check adjacency
+      const x = tileId % 9;
+      const y = Math.floor(tileId / 9);
+      const neighbors = [];
+      if (x > 0) neighbors.push(tileId - 1);
+      if (x < 8) neighbors.push(tileId + 1);
+      if (y > 0) neighbors.push(tileId - 9);
+      if (y < 8) neighbors.push(tileId + 9);
+      
+      const hasAdjacent = neighbors.some(n => game.board[n].ownerId === player.id);
+      if (!hasAdjacent) {
+        game.logs.push("You can only attack tiles adjacent to your territory!");
+        return;
+      }
+
+      if (tile.monsterType !== null) {
+        // Monster combat
+        const hero = player.heroes.find((h: any) => h.id === heroId);
+        if (!hero || hero.abilityUsed) {
+          game.logs.push("Select a ready hero to attack the monster!");
+          return;
+        }
+
+        // Calculate damage
+        let damage = 0;
+        if (hero.id.startsWith("ash")) damage = hero.level === 1 ? 1 : 2;
+        if (hero.id.startsWith("brog")) damage = hero.level === 1 ? 2 : 3;
+        if (hero.id.startsWith("kael")) damage = hero.level === 1 ? 1 : 2;
+        if (hero.id.startsWith("azul")) damage = hero.level === 1 ? 4 : 6;
+        if (hero.id.startsWith("night")) damage = hero.level === 1 ? 4 : 6;
+        if (hero.id.startsWith("ignis")) damage = hero.level === 1 ? 6 : 8;
+        if (hero.id.startsWith("mordecai")) damage = hero.level === 1 ? 7 : 12;
+        if (hero.id.startsWith("hero_leg")) damage = hero.level === 1 ? 9 : 15;
+        if (hero.id.startsWith("dax")) {
+          damage = 1;
+          if (tile.monsterType === MonsterType.GIANT || tile.monsterType === MonsterType.DRAGON || tile.monsterType === MonsterType.DEMON_KING) {
+            damage += 2;
+          }
+        }
+
+        // Generic damage for others
+        if (damage === 0) damage = 1;
+
+        // Gear bonuses
+        player.gear.forEach((g: any) => {
+          if (g.id === "g_sword") damage += 1;
+          if (g.id === "g_axe" && (tile.monsterType === MonsterType.ORC || tile.monsterType === MonsterType.GIANT)) damage += 3;
+          if (g.id === "g_horn") damage += 1;
+        });
+
+        tile.monsterHP -= damage;
+        hero.abilityUsed = true;
+        game.logs.push(`${player.name}'s ${hero.name} dealt ${damage} damage to the ${tile.monsterType}!`);
+
+        if (tile.monsterHP <= 0) {
+          tile.monsterType = null;
+          tile.monsterHP = 0;
+          tile.monsterMaxHP = 0;
+          tile.ownerId = player.id;
+          tile.isOccupied = false; // Liberated, not occupied
+          player.tilesCount++;
+          player.gemstones += 3;
+          game.logs.push(`${player.name} defeated the monster and claimed tile ${tileId}!`);
+        }
+      } else if (tile.ownerId !== null) {
+        // Player-owned tile combat (mana cost)
+        let cost = 2;
+        if (tile.structure === StructureType.WALL) cost = tile.level === 1 ? 3 : 5;
+        if (tile.structure === StructureType.GATE) cost = 4;
+        if (tile.structure === StructureType.MOAT) cost = tile.level === 1 ? 4 : 6;
+
+        if (player.mana < cost) {
+          game.logs.push(`Not enough mana to capture ${tile.ownerId}'s tile!`);
+          return;
+        }
+
+        player.mana -= cost;
+        const oldOwnerId = tile.ownerId;
+        const oldOwner = game.players.find((p: any) => p.id === oldOwnerId);
+        
+        tile.ownerId = player.id;
+        tile.structure = null;
+        tile.isOccupied = true;
+        tile.occupiedByHeroId = null;
+        
+        player.tilesCount++;
+        if (oldOwner) {
+          oldOwner.tilesCount--;
+          player.gemstones += 5; // Capture bonus
+        }
+        game.logs.push(`${player.name} captured ${oldOwner?.name}'s tile ${tileId}!`);
+      }
+
+      io.to(roomId).emit("game_updated", game);
+    });
+
+    socket.on("trade_resources", ({ roomId, from, to }) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.PREPARATION) return;
+
+      const player = game.players.find((p: any) => p.id === socket.id);
+      if (!player) return;
+
+      if (!player.gear.some((g: any) => g.id === "g_scale")) {
+        game.logs.push(`${player.name} needs a Merchant's Scale to trade resources!`);
+        return;
+      }
+
+      const gear = player.gear.find((g: any) => g.id === "g_scale");
+      if (gear.abilityUsed) {
+        game.logs.push(`${player.name} already used their Merchant's Scale this turn!`);
+        return;
+      }
+
+      // 'from' and 'to' are resource names: 'wood', 'clay', 'stone', 'gemstones'
+      if (player[from] < 1) return;
+
+      player[from] -= 1;
+      player[to] += 1;
+      gear.abilityUsed = true;
+
+      game.logs.push(`${player.name} traded 1 ${from} for 1 ${to} using the Merchant's Scale.`);
+      io.to(roomId).emit("game_updated", game);
+    });
+
+    socket.on("mana_attack", ({ roomId, tileId, amount }) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.ATTACK) return;
+
+      const player = game.players[game.currentPlayerIndex];
+      if (player.id !== socket.id) return;
+
+      const tile = game.board[tileId];
+      if (tile.monsterType === null) return;
+
+      const manaToUse = Math.min(player.mana, Math.max(1, Math.floor(Number(amount) || 1)));
+      if (manaToUse <= 0) return;
+
+      // Check adjacency
+      const x = tileId % 9;
+      const y = Math.floor(tileId / 9);
+      const neighbors = [];
+      if (x > 0) neighbors.push(tileId - 1);
+      if (x < 8) neighbors.push(tileId + 1);
+      if (y > 0) neighbors.push(tileId - 9);
+      if (y < 8) neighbors.push(tileId + 9);
+      
+      const hasAdjacent = neighbors.some(n => game.board[n].ownerId === player.id);
+      if (!hasAdjacent) {
+        game.logs.push("You can only attack monsters adjacent to your territory!");
+        return;
+      }
+
+      const damage = manaToUse * 2;
+      player.mana -= manaToUse;
+      tile.monsterHP -= damage;
+
+      game.logs.push(`${player.name} used ${manaToUse} Mana to deal ${damage} damage to the ${tile.monsterType}!`);
+      
+      if (tile.monsterHP <= 0) {
+        tile.monsterType = null;
+        tile.monsterHP = 0;
+        tile.monsterMaxHP = 0;
+        tile.ownerId = player.id;
+        tile.isOccupied = false; // Liberated, not occupied
+        tile.occupiedByHeroId = null;
+        
+        player.tilesCount++;
+        player.gemstones += 3;
+        game.logs.push(`${player.name} defeated the monster and captured tile ${tileId}!`);
+      }
+
+      io.to(roomId).emit("game_updated", game);
+    });
+
+    socket.on("end_turn", (roomId) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.ATTACK) return;
+
+      const player = game.players[game.currentPlayerIndex];
+      if (player.id !== socket.id) return;
+
+      advanceTurn(game);
+      io.to(roomId).emit("game_updated", game);
+    });
+  });
+
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static(path.join(process.cwd(), "dist")));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(process.cwd(), "dist", "index.html"));
+    });
+  }
+
+  httpServer.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();
