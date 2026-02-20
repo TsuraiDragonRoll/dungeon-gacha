@@ -157,6 +157,11 @@ async function startServer() {
         game.status = Phase.PREPARATION;
         game.round++;
 
+        // Re-sort players by tile count ascending (fewest tiles goes first as catch-up)
+        game.players.sort((a: any, b: any) => a.tilesCount - b.tilesCount);
+        game.currentPlayerIndex = 0;
+        game.logs.push(`Turn order updated: ${game.players.map((p: any) => p.name).join(" → ")}`);
+
         game.board.forEach((tile: any) => {
           // Tiles with structures are always occupied.
           // Starting tiles are also always occupied.
@@ -224,6 +229,12 @@ async function startServer() {
   io.on("connection", (socket) => {
     socket.on("join_game", ({ roomId, playerName }) => {
       socket.join(roomId);
+
+      // If the room exists but the game is already over, wipe it so a fresh lobby starts.
+      if (games.has(roomId) && games.get(roomId).status === Phase.GAME_OVER) {
+        games.delete(roomId);
+      }
+
       if (!games.has(roomId)) {
         games.set(roomId, {
           id: roomId,
@@ -259,12 +270,13 @@ async function startServer() {
             { id: "p_gear", used: false, type: "PRIMARY", label: "Create Gear", cost: 8, reward: { gear: true } },
             { id: "p_flag", used: false, type: "PRIMARY", label: "Build Flagpole (Center)", cost: 0, reward: { flag: true } },
           ],
+          maxPlayers: 4,
           ...createDecks()
         });
       }
 
       const game = games.get(roomId);
-      if (game.players.length < 4 && game.status === Phase.LOBBY) {
+      if (game.players.length < game.maxPlayers && game.status === Phase.LOBBY) {
         const colors = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b"];
         game.players.push({
           id: socket.id,
@@ -296,6 +308,46 @@ async function startServer() {
       }
     });
 
+    socket.on("kick_player", ({ roomId, targetId }) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.LOBBY) return;
+      // Only the host (first player in the list) can kick
+      if (game.players[0]?.id !== socket.id) return;
+      // Cannot kick yourself
+      if (targetId === socket.id) return;
+
+      const idx = game.players.findIndex((p: any) => p.id === targetId);
+      if (idx === -1) return;
+
+      game.players.splice(idx, 1);
+      game.logs.push(`A player was kicked from the lobby.`);
+      // Notify the kicked player individually so they can show an alert
+      io.to(targetId).emit("kicked_from_lobby");
+      io.to(roomId).emit("game_updated", game);
+    });
+
+    socket.on("set_max_players", ({ roomId, maxPlayers }) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.LOBBY) return;
+      // Only the host can change the cap
+      if (game.players[0]?.id !== socket.id) return;
+
+      const cap = Math.max(2, Math.min(4, Number(maxPlayers)));
+      game.maxPlayers = cap;
+
+      // Kick excess players if the new cap is lower
+      while (game.players.length > cap) {
+        const kicked = game.players.pop();
+        if (kicked) {
+          game.logs.push(`Player removed due to room size reduction.`);
+          io.to(kicked.id).emit("kicked_from_lobby");
+        }
+      }
+
+      io.to(roomId).emit("game_updated", game);
+    });
+
+
     socket.on("start_game", (roomId) => {
       const game = games.get(roomId);
       if (game && game.players.length >= 2) {
@@ -310,7 +362,7 @@ async function startServer() {
             game.board[tId].monsterHP = 0;
             game.board[tId].monsterMaxHP = 0;
             game.board[tId].isOccupied = true;
-            if (tId === tiles[0]) game.board[tId].structure = StructureType.GATE;
+            if (tId === tiles[1]) game.board[tId].structure = StructureType.GATE;
           });
         });
 
