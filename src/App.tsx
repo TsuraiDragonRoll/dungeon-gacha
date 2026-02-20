@@ -44,8 +44,13 @@ export default function App() {
     socket.on("game_updated", (state: GameState) => {
       setGameState(state);
     });
+    socket.on("kicked_from_lobby", () => {
+      alert("You have been removed from the lobby by the host.");
+      window.location.reload();
+    });
     return () => {
       socket.off("game_updated");
+      socket.off("kicked_from_lobby");
     };
   }, []);
 
@@ -267,19 +272,12 @@ export default function App() {
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/30">Dungeon Masters</h3>
           {gameState.players.map((p, i) => (
-            <div key={p.id} className={cn(
-              "p-3 rounded-xl border transition-all",
-              i === gameState.currentPlayerIndex ? "bg-white/5 border-white/20" : "bg-transparent border-transparent opacity-60"
-            )}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }} />
-                  <span className="text-sm font-medium">{p.name} {p.id === socket.id && "(You)"}</span>
-                  {p.finishedPrep && <span className="text-[9px] bg-white/10 px-1.5 py-0.5 rounded text-white/40 uppercase tracking-tighter">Done</span>}
-                </div>
-                <span className="text-xs font-mono text-white/40">{p.tilesCount} tiles</span>
-              </div>
-            </div>
+            <PlayerRow
+              key={p.id}
+              player={p}
+              isActive={i === gameState.currentPlayerIndex}
+              isSelf={p.id === socket.id}
+            />
           ))}
         </div>
 
@@ -296,24 +294,75 @@ export default function App() {
       {/* Main Area: Board & Controls */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         {/* Header / Phase Info */}
-        <div className="h-16 border-b border-white/5 flex items-center justify-between px-8 bg-[#151619]/50 backdrop-blur-xl">
-          <div className="flex items-center gap-4">
-            <div className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[10px] font-bold uppercase tracking-widest">
-              {gameState.status}
+        <div className="border-b border-white/5 bg-[#151619]/50 backdrop-blur-xl">
+          {/* Row 1: phase + turn + action button */}
+          <div className="h-12 flex items-center justify-between px-8">
+            <div className="flex items-center gap-4">
+              <div className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[10px] font-bold uppercase tracking-widest">
+                {gameState.status}
+              </div>
+              <span className="text-sm text-white/40">
+                {isMyTurn ? "Your Turn - Make your move" : `${gameState.players[gameState.currentPlayerIndex]?.name}'s Turn`}
+              </span>
             </div>
-            <span className="text-sm text-white/40">
-              {isMyTurn ? "Your Turn - Make your move" : `${gameState.players[gameState.currentPlayerIndex]?.name}'s Turn`}
-            </span>
+
+            {isMyTurn && gameState.status === Phase.ATTACK && (
+              <button
+                onClick={handleEndTurn}
+                className="flex items-center gap-2 bg-white text-black px-4 py-1.5 rounded-full text-xs font-bold hover:bg-emerald-400 transition-colors"
+              >
+                Confirm Turn <ArrowRight className="w-3 h-3" />
+              </button>
+            )}
           </div>
 
-          {isMyTurn && gameState.status === Phase.ATTACK && (
-            <button
-              onClick={handleEndTurn}
-              className="flex items-center gap-2 bg-white text-black px-4 py-1.5 rounded-full text-xs font-bold hover:bg-emerald-400 transition-colors"
-            >
-              Confirm Turn <ArrowRight className="w-3 h-3" />
-            </button>
-          )}
+          {/* Row 2: turn order strip */}
+          <div className="h-10 px-8 flex items-center gap-1 border-t border-white/5">
+            <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/20 mr-2 shrink-0">Turn Order</span>
+            <div className="flex items-center gap-1 overflow-x-auto">
+              {gameState.players.map((p, i) => {
+                const isActive = i === gameState.currentPlayerIndex;
+                const isSelf = p.id === socket.id;
+                return (
+                  <React.Fragment key={p.id}>
+                    {i > 0 && (
+                      <ArrowRight className="w-2.5 h-2.5 text-white/15 shrink-0" />
+                    )}
+                    <motion.div
+                      animate={isActive ? { scale: [1, 1.06, 1] } : { scale: 1 }}
+                      transition={isActive ? { repeat: Infinity, duration: 1.8, ease: "easeInOut" } : {}}
+                      className={cn(
+                        "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold transition-all shrink-0",
+                        isActive
+                          ? "text-white border"
+                          : "text-white/30 border border-transparent"
+                      )}
+                      style={isActive ? {
+                        backgroundColor: `${p.color}22`,
+                        borderColor: `${p.color}66`,
+                        boxShadow: `0 0 8px ${p.color}44`
+                      } : {}}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{ backgroundColor: isActive ? p.color : `${p.color}55` }}
+                      />
+                      <span>{i + 1}.</span>
+                      <span className={isActive ? "text-white" : "text-white/30"}>
+                        {isSelf ? "You" : p.name}
+                      </span>
+                      <span
+                        className="text-[8px] font-mono ml-0.5"
+                        style={{ color: isActive ? `${p.color}cc` : "rgba(255,255,255,0.15)" }}
+                      >
+                        {p.tilesCount}✦
+                      </span>
+                    </motion.div>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         <div className="flex-1 flex items-center justify-center p-8 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#1a1c21] to-[#0a0502]">
@@ -358,37 +407,14 @@ export default function App() {
               )}
             </div>
           ) : gameState.status === Phase.GAME_OVER ? (
-            <div className="text-center">
-              <Trophy className="w-20 h-20 text-yellow-500 mx-auto mb-6 animate-bounce" />
-              <h2 className="text-4xl font-bold mb-4 uppercase tracking-widest">Victory!</h2>
-              <div className="space-y-4 mb-8">
-                {gameState.players.sort((a, b) => b.gemstones - a.gemstones).map((p, i) => (
-                  <div key={p.id} className="flex items-center justify-between gap-8 bg-white/5 p-4 rounded-xl border border-white/10">
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl font-bold text-white/20">#{i + 1}</span>
-                      <span className="font-bold">{p.name}</span>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <span className="flex items-center gap-1 text-red-500 font-mono"><Gem className="w-4 h-4" /> {p.gemstones}</span>
-                      <span className="text-white/40 text-xs">{p.tilesCount} tiles</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <button onClick={() => window.location.reload()} className="px-8 py-3 bg-emerald-600 rounded-xl font-bold uppercase tracking-widest hover:bg-emerald-500 transition-all">
-                Play Again
-              </button>
-            </div>
+            <GameOverScreen gameState={gameState} myId={socket.id} roomId={roomId} playerName={playerName} />
           ) : gameState.status === Phase.LOBBY ? (
-            <div className="text-center">
-              <h2 className="text-2xl font-bold mb-4">Waiting for Masters...</h2>
-              <p className="text-white/40 mb-8">{gameState.players.length} / 4 players joined</p>
-              {gameState.players.length >= 2 && (
-                <button onClick={handleStart} className="px-8 py-3 bg-emerald-600 rounded-xl font-bold uppercase tracking-widest hover:bg-emerald-500 transition-all">
-                  Start Game
-                </button>
-              )}
-            </div>
+            <LobbyScreen
+              gameState={gameState}
+              myId={socket.id}
+              roomId={roomId}
+              onStart={handleStart}
+            />
           ) : gameState.status === Phase.DRAFTING ? (
             <div className="w-full max-w-4xl">
               <h2 className="text-center text-xl font-bold mb-2 uppercase tracking-widest">Draft your Arsenal</h2>
@@ -610,6 +636,476 @@ export default function App() {
   );
 }
 
+function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolean; isSelf: boolean }) {
+  const [hovered, setHovered] = React.useState(false);
+
+  const resources = [
+    { label: "Gems", value: player.gemstones, color: "#ef4444", icon: "💎" },
+    { label: "Mana", value: player.mana, color: "#60a5fa", icon: "⚡" },
+    { label: "Wood", value: player.wood, color: "#d97706", icon: "🌲" },
+    { label: "Clay", value: player.clay, color: "#b45309", icon: "🧱" },
+    { label: "Stone", value: player.stone, color: "#94a3b8", icon: "⛰" },
+  ];
+
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div className={cn(
+        "p-3 rounded-xl border transition-all cursor-default",
+        isActive ? "bg-white/5 border-white/20" : "bg-transparent border-transparent opacity-60"
+      )}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color }} />
+            <span className="text-sm font-medium">
+              {player.name} {isSelf && "(You)"}
+            </span>
+            {player.finishedPrep && (
+              <span className="text-[9px] bg-white/10 px-1.5 py-0.5 rounded text-white/40 uppercase tracking-tighter">Done</span>
+            )}
+          </div>
+          <span className="text-xs font-mono text-white/40">{player.tilesCount} tiles</span>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {hovered && (
+          <motion.div
+            initial={{ opacity: 0, x: -8, scale: 0.95 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: -8, scale: 0.95 }}
+            transition={{ duration: 0.14 }}
+            className="absolute left-full top-0 ml-2 z-50 pointer-events-none"
+            style={{ minWidth: "160px" }}
+          >
+            <div
+              className="rounded-xl border shadow-2xl overflow-hidden"
+              style={{
+                background: "linear-gradient(135deg, #0f0f12 60%, #1a1c2188)",
+                borderColor: `${player.color}44`,
+                boxShadow: `0 8px 32px 0 ${player.color}22`,
+              }}
+            >
+              {/* Header */}
+              <div
+                className="px-3 py-2 border-b flex items-center gap-2"
+                style={{ borderColor: `${player.color}30`, backgroundColor: `${player.color}18` }}
+              >
+                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color }} />
+                <span className="text-[10px] font-extrabold uppercase tracking-widest" style={{ color: player.color }}>
+                  {player.name}
+                </span>
+              </div>
+
+              {/* Resource rows */}
+              <div className="px-3 py-2 space-y-1.5">
+                {resources.map(r => (
+                  <div key={r.label} className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] leading-none">{r.icon}</span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: r.color }}>{r.label}</span>
+                    </div>
+                    <span className="text-[11px] font-mono font-bold text-white">{r.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Heroes / Gear counts */}
+              <div
+                className="px-3 py-2 border-t flex items-center justify-between gap-4"
+                style={{ borderColor: `${player.color}20`, backgroundColor: `${player.color}0a` }}
+              >
+                <span className="text-[9px] font-bold uppercase tracking-wider text-white/30">Heroes</span>
+                <span className="text-[11px] font-mono font-bold text-white/60">{player.heroes?.length ?? 0}</span>
+                <span className="text-[9px] font-bold uppercase tracking-wider text-white/30">Gear</span>
+                <span className="text-[11px] font-mono font-bold text-white/60">{player.gear?.length ?? 0}</span>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function LobbyScreen({ gameState, myId, roomId, onStart }: {
+  gameState: GameState;
+  myId: string;
+  roomId: string;
+  onStart: () => void;
+}) {
+  const isHost = gameState.players[0]?.id === myId;
+  const maxPlayers: number = (gameState as any).maxPlayers ?? 4;
+  const filledSlots = gameState.players.length;
+  const canStart = isHost && filledSlots >= 2;
+
+  const handleKick = (targetId: string) => {
+    socket.emit("kick_player", { roomId, targetId });
+  };
+
+  const handleSetMax = (n: number) => {
+    socket.emit("set_max_players", { roomId, maxPlayers: n });
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="w-full max-w-md"
+    >
+      {/* Header */}
+      <div className="text-center mb-8">
+        <Castle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
+        <h2 className="text-2xl font-black uppercase tracking-widest mb-1">Dungeon Lobby</h2>
+        <div className="flex items-center justify-center gap-2 text-white/40 text-sm">
+          <span>Room:</span>
+          <span className="font-mono font-bold text-white/70 bg-white/5 border border-white/10 px-2 py-0.5 rounded-lg">{roomId}</span>
+        </div>
+      </div>
+
+      {/* Main card */}
+      <div className="bg-[#151619] border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
+
+        {/* Host controls — room size */}
+        {isHost && (
+          <div className="px-6 py-4 border-b border-white/5 bg-emerald-500/5">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-emerald-400/70 mb-0.5">Room Size</div>
+                <div className="text-xs text-white/40">Max players allowed to join</div>
+              </div>
+              <div className="flex gap-1">
+                {[2, 3, 4].map(n => (
+                  <button
+                    key={n}
+                    onClick={() => handleSetMax(n)}
+                    className={cn(
+                      "w-9 h-9 rounded-xl font-bold text-sm transition-all border",
+                      maxPlayers === n
+                        ? "bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-900/30"
+                        : "bg-white/5 border-white/10 text-white/40 hover:bg-white/10 hover:text-white/70"
+                    )}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Player list */}
+        <div className="px-6 py-4 space-y-2">
+          <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/25 mb-3">
+            Players — {filledSlots} / {maxPlayers}
+          </div>
+
+          {/* Filled slots */}
+          {gameState.players.map((p, i) => {
+            const isMe = p.id === myId;
+            const isPlayerHost = i === 0;
+            return (
+              <motion.div
+                key={p.id}
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.06 }}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-xl border bg-white/3"
+                style={{ borderColor: `${p.color}33`, backgroundColor: `${p.color}0a` }}
+              >
+                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
+                <span className="flex-1 text-sm font-bold truncate">
+                  {p.name} {isMe && <span className="text-white/30 font-normal">(You)</span>}
+                </span>
+                {isPlayerHost && (
+                  <span className="text-[9px] font-black uppercase tracking-widest text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-1.5 py-0.5 rounded shrink-0">
+                    👑 Host
+                  </span>
+                )}
+                {/* Kick button — host only, not on self */}
+                {isHost && !isMe && (
+                  <button
+                    onClick={() => handleKick(p.id)}
+                    className="text-[9px] font-bold uppercase tracking-wider text-red-400/70 hover:text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 px-2 py-1 rounded-lg transition-all shrink-0"
+                  >
+                    Kick
+                  </button>
+                )}
+              </motion.div>
+            );
+          })}
+
+          {/* Empty slots */}
+          {Array.from({ length: maxPlayers - filledSlots }).map((_, i) => (
+            <div
+              key={`empty-${i}`}
+              className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-dashed border-white/8"
+            >
+              <div className="w-2.5 h-2.5 rounded-full shrink-0 bg-white/10" />
+              <span className="flex-1 text-sm text-white/20 italic">Waiting for player...</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 pb-6 space-y-3">
+          {isHost ? (
+            <>
+              <motion.button
+                whileHover={canStart ? { scale: 1.02 } : {}}
+                whileTap={canStart ? { scale: 0.98 } : {}}
+                onClick={onStart}
+                disabled={!canStart}
+                className={cn(
+                  "w-full py-3.5 rounded-xl font-bold uppercase tracking-widest text-sm transition-all",
+                  canStart
+                    ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/30"
+                    : "bg-white/5 text-white/20 cursor-not-allowed border border-white/5"
+                )}
+              >
+                {canStart ? "⚔ Start Dungeon" : `Waiting for players... (${filledSlots}/${maxPlayers})`}
+              </motion.button>
+              <p className="text-[10px] text-white/25 text-center">
+                You can start with 2+ players. Share the room code above to invite others.
+              </p>
+            </>
+          ) : (
+            <div className="text-center py-2">
+              <motion.div
+                animate={{ opacity: [0.4, 1, 0.4] }}
+                transition={{ duration: 2, repeat: Infinity }}
+                className="text-sm text-white/40"
+              >
+                Waiting for the host to start...
+              </motion.div>
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function GameOverScreen({ gameState, myId, roomId, playerName }: {
+  gameState: GameState;
+  myId: string;
+  roomId: string;
+  playerName: string;
+}) {
+  const [rematching, setRematching] = React.useState(false);
+  const sorted = [...gameState.players].sort((a, b) => b.gemstones - a.gemstones);
+  const winner = sorted[0];
+  const didWin = winner?.id === myId;
+  const medals = ["🥇", "🥈", "🥉", "🏅"];
+
+  const handleRematch = () => {
+    setRematching(true);
+    // Server will wipe the GAME_OVER room and create a fresh lobby;
+    // the client stays connected and receives game_updated with the new LOBBY state.
+    socket.emit("join_game", { roomId, playerName });
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{
+        background: didWin
+          ? "radial-gradient(ellipse at 50% 20%, #78350f55 0%, #0a0502 60%)"
+          : "radial-gradient(ellipse at 50% 20%, #7f1d1d44 0%, #0a0502 60%)"
+      }}
+    >
+      {/* Ambient particles */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        {Array.from({ length: 18 }).map((_, i) => (
+          <motion.div
+            key={i}
+            className="absolute rounded-full"
+            style={{
+              width: `${4 + (i % 5) * 3}px`,
+              height: `${4 + (i % 5) * 3}px`,
+              left: `${(i * 37 + 7) % 100}%`,
+              top: `${(i * 53 + 13) % 100}%`,
+              backgroundColor: didWin ? `hsl(${40 + i * 12}, 90%, 65%)` : `hsl(${340 + i * 8}, 70%, 55%)`,
+              opacity: 0.15 + (i % 4) * 0.07,
+            }}
+            animate={{ y: [0, -18, 0], opacity: [0.15, 0.35, 0.15] }}
+            transition={{ duration: 3 + (i % 4), repeat: Infinity, delay: i * 0.22, ease: "easeInOut" }}
+          />
+        ))}
+      </div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 40, scale: 0.93 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ delay: 0.1, duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+        className="relative w-full max-w-lg"
+      >
+        {/* Main card */}
+        <div
+          className="rounded-3xl border overflow-hidden shadow-2xl"
+          style={{
+            background: "linear-gradient(160deg, #131316 0%, #0d0d0f 100%)",
+            borderColor: didWin ? "#a16207aa" : "#991b1baa",
+            boxShadow: didWin
+              ? "0 0 80px #a1620730, 0 24px 60px #00000080"
+              : "0 0 80px #991b1b30, 0 24px 60px #00000080",
+          }}
+        >
+          {/* Hero banner */}
+          <div
+            className="px-8 pt-10 pb-8 text-center relative overflow-hidden"
+            style={{
+              background: didWin
+                ? "linear-gradient(180deg, #78350f44 0%, transparent 100%)"
+                : "linear-gradient(180deg, #7f1d1d44 0%, transparent 100%)",
+            }}
+          >
+            {/* Decorative top line */}
+            <div
+              className="absolute top-0 left-0 right-0 h-0.5"
+              style={{
+                background: didWin
+                  ? "linear-gradient(90deg, transparent, #f59e0b, transparent)"
+                  : "linear-gradient(90deg, transparent, #ef4444, transparent)"
+              }}
+            />
+
+            <motion.div
+              animate={{ rotate: [0, -4, 4, -2, 2, 0], scale: [1, 1.1, 1] }}
+              transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
+              className="text-6xl mb-3 select-none"
+            >
+              {didWin ? "👑" : "💀"}
+            </motion.div>
+
+            <motion.h1
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.25 }}
+              className="text-4xl font-black uppercase tracking-widest mb-1"
+              style={{ color: didWin ? "#fbbf24" : "#f87171" }}
+            >
+              {didWin ? "Victory!" : "Defeated"}
+            </motion.h1>
+
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.4 }}
+              className="text-sm font-medium"
+              style={{ color: didWin ? "#fef3c7bb" : "#fecacabb" }}
+            >
+              {didWin
+                ? `${winner.name} planted the Flagpole and claimed the dungeon!`
+                : `${winner.name} claimed victory. Better luck next time.`}
+            </motion.p>
+          </div>
+
+          {/* Leaderboard */}
+          <div className="px-6 pb-6 space-y-2">
+            <div className="text-[9px] font-bold uppercase tracking-[0.25em] text-white/25 mb-3 text-center">
+              Final Standings
+            </div>
+
+            {sorted.map((p, i) => {
+              const isMe = p.id === myId;
+              const isWinner = i === 0;
+              return (
+                <motion.div
+                  key={p.id}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.35 + i * 0.08 }}
+                  className="flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all"
+                  style={{
+                    backgroundColor: isWinner ? `${p.color}14` : isMe ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)",
+                    borderColor: isWinner ? `${p.color}44` : isMe ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
+                    boxShadow: isWinner ? `0 0 20px ${p.color}18` : "none",
+                  }}
+                >
+                  {/* Medal */}
+                  <span className="text-xl w-7 text-center shrink-0">{medals[i] ?? "🏅"}</span>
+
+                  {/* Player dot + name */}
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
+                    <span className={`font-bold text-sm truncate ${isWinner ? "text-white" : "text-white/60"}`}>
+                      {p.name}
+                    </span>
+                    {isMe && (
+                      <span className="text-[8px] font-bold bg-white/10 border border-white/15 text-white/40 px-1.5 py-0.5 rounded uppercase tracking-tight shrink-0">
+                        You
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Stats */}
+                  <div className="flex items-center gap-3 shrink-0 text-[11px] font-mono">
+                    <span className="flex items-center gap-1 text-red-400">
+                      <Gem className="w-3 h-3" /> {p.gemstones}
+                    </span>
+                    <span className="text-white/30">
+                      {p.tilesCount} <span className="text-white/20">tiles</span>
+                    </span>
+                    <span className="text-white/25">
+                      {(p.heroes?.length ?? 0)}⚔
+                    </span>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+
+          {/* Action buttons */}
+          <div className="px-6 pb-8 flex gap-3">
+            <motion.button
+              whileHover={!rematching ? { scale: 1.03 } : {}}
+              whileTap={!rematching ? { scale: 0.97 } : {}}
+              onClick={handleRematch}
+              disabled={rematching}
+              className="flex-1 py-3.5 rounded-2xl font-bold uppercase tracking-widest text-sm transition-all border relative overflow-hidden"
+              style={{
+                background: didWin
+                  ? "linear-gradient(135deg, #a16207, #78350f)"
+                  : "linear-gradient(135deg, #1a3a5c, #0f2040)",
+                borderColor: didWin ? "#f59e0b55" : "#3b82f655",
+                color: didWin ? "#fef3c7" : "#93c5fd",
+                boxShadow: didWin ? "0 4px 20px #a1620730" : "0 4px 20px #3b82f620",
+                opacity: rematching ? 0.6 : 1,
+              }}
+            >
+              {rematching ? (
+                <span className="flex items-center justify-center gap-2">
+                  <motion.span
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
+                    className="inline-block"
+                  >⚔</motion.span>
+                  Joining...
+                </span>
+              ) : "⚔ Rematch"}
+            </motion.button>
+
+            <motion.button
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => window.location.reload()}
+              className="flex-1 py-3.5 rounded-2xl font-bold uppercase tracking-widest text-sm bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white/80 transition-all"
+            >
+              🏰 Exit to Menu
+            </motion.button>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 function StatCard({ icon, label, value }: { icon: React.ReactNode, label: string, value: number }) {
   return (
     <div className="bg-black/40 border border-white/5 p-3 rounded-xl flex items-center gap-3">
@@ -625,6 +1121,7 @@ function StatCard({ icon, label, value }: { icon: React.ReactNode, label: string
 function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSelected: boolean, key?: any }) {
   const { tile, players, onClick, isSelected } = props;
   const owner = players.find(p => p.id === tile.ownerId);
+  const [hovered, setHovered] = React.useState(false);
 
   const getMonsterColor = (type: MonsterType | null) => {
     if (type === MonsterType.GOBLIN) return "#10b981";
@@ -635,11 +1132,25 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
     return "#ffffff";
   };
 
+  const getMonsterLabel = (type: MonsterType | null) => {
+    if (type === MonsterType.GOBLIN) return "Goblin";
+    if (type === MonsterType.ORC) return "Orc";
+    if (type === MonsterType.GIANT) return "Giant";
+    if (type === MonsterType.DRAGON) return "Dragon";
+    if (type === MonsterType.DEMON_KING) return "Demon King";
+    return "Monster";
+  };
+
+  const monsterColor = getMonsterColor(tile.monsterType);
+  const hpPercent = tile.monsterMaxHP > 0 ? Math.max(0, (tile.monsterHP / tile.monsterMaxHP) * 100) : 0;
+
   return (
     <motion.button
       whileHover={{ scale: 1.05, zIndex: 10 }}
       whileTap={{ scale: 0.95 }}
       onClick={onClick}
+      onHoverStart={() => setHovered(true)}
+      onHoverEnd={() => setHovered(false)}
       className={cn(
         "w-8 h-8 md:w-12 md:h-12 rounded-sm flex items-center justify-center relative transition-all",
         owner ? "shadow-inner" : "bg-[#1a1c21] hover:bg-white/10",
@@ -666,10 +1177,78 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
           <div className="absolute inset-0 bg-white rounded-full scale-110" />
           <div
             className="w-full h-full rounded-full flex items-center justify-center text-[8px] md:text-[10px] font-bold text-white shadow-lg"
-            style={{ backgroundColor: getMonsterColor(tile.monsterType) }}
+            style={{ backgroundColor: monsterColor }}
           >
             {tile.monsterHP}
           </div>
+
+          {/* Monster hover tooltip */}
+          <AnimatePresence>
+            {hovered && (
+              <motion.div
+                initial={{ opacity: 0, y: 4, scale: 0.92 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 4, scale: 0.92 }}
+                transition={{ duration: 0.13 }}
+                className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 pointer-events-none"
+                style={{ minWidth: "88px" }}
+              >
+                <div
+                  className="rounded-lg px-2.5 py-2 shadow-2xl border text-center"
+                  style={{
+                    background: `linear-gradient(135deg, #0f0f12 60%, ${monsterColor}22)`,
+                    borderColor: `${monsterColor}55`,
+                    boxShadow: `0 4px 24px 0 ${monsterColor}33`
+                  }}
+                >
+                  {/* Monster type label */}
+                  <div
+                    className="text-[10px] font-extrabold uppercase tracking-widest leading-none mb-1.5"
+                    style={{ color: monsterColor }}
+                  >
+                    {getMonsterLabel(tile.monsterType)}
+                  </div>
+
+                  {/* HP fraction */}
+                  <div className="text-[9px] font-mono font-bold text-white/70 mb-1.5">
+                    ❤ {tile.monsterHP} / {tile.monsterMaxHP}
+                  </div>
+
+                  {/* HP bar */}
+                  <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{
+                        width: `${hpPercent}%`,
+                        backgroundColor: monsterColor,
+                        boxShadow: `0 0 6px ${monsterColor}`
+                      }}
+                    />
+                  </div>
+                </div>
+                {/* Tooltip caret */}
+                <div
+                  className="mx-auto w-2 h-2 rotate-45 -mt-1"
+                  style={{ backgroundColor: "#0f0f12", borderRight: `1px solid ${monsterColor}55`, borderBottom: `1px solid ${monsterColor}55` }}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+
+      {/* Liberated tile indicator: owned, no monster, not occupied */}
+      {tile.ownerId && !tile.monsterType && !tile.isOccupied && (
+        <div
+          className="absolute top-0 left-0 w-3.5 h-3.5 flex items-center justify-center rounded-br-sm pointer-events-none z-10"
+          style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+        >
+          <span
+            className="text-[8px] font-black leading-none"
+            style={{ color: "#ef4444", textShadow: "0 0 4px #ef4444aa" }}
+          >
+            !
+          </span>
         </div>
       )}
 
@@ -935,6 +1514,9 @@ function Rulebook({ onClose }: { onClose: () => void }) {
               <RuleRow label="Adjacency rule">You can only target tiles immediately next to (orthogonally adjacent to) tiles you already control.</RuleRow>
               <RuleRow label="Monster HP">Goblin 2 · Orc 5 · Giant 8 · Dragon 14 · Demon King 22. Stronger monsters ring the centre.</RuleRow>
               <RuleRow label="Reclamation">At round end, unoccupied, structureless non-starting tiles revert to random monsters.</RuleRow>
+              <RuleRow label="! Liberated tiles">
+                A small red <strong className="text-red-400">!</strong> badge in the top-left corner of a tile means it is <strong className="text-white">liberated</strong> — you own it, but it has no structure and no occupying hero. These tiles <strong className="text-white">will be reclaimed by monsters</strong> at the beginning of the next Attack phase. Secure them with a structure or an Occupy-ability hero to keep them.
+              </RuleRow>
             </RuleSection>
 
             <RuleSection title="🏆 Victory — Bidding War">
