@@ -1,15 +1,11 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig, loadEnv} from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 
-export default defineConfig(({mode}) => {
-  const env = loadEnv(mode, '.', '');
-  preview: {
-    allowedHosts: ['dungeon-gacha.onrender.com'], // Add your specific Render host
-    host: '0.0.0.0', // Ensure it listens on all addresses
-    port: 8080,      // Match the port used in your server
-  }
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  
   return {
     plugins: [react(), tailwindcss()],
     define: {
@@ -20,10 +16,16 @@ export default defineConfig(({mode}) => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    // Fix for the Render "Blocked Request" error
+    preview: {
+      allowedHosts: ['dungeon-gacha.onrender.com'],
+      host: '0.0.0.0',
+      port: 8080
+    },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
+      // Keep HMR settings for local development
       hmr: process.env.DISABLE_HMR !== 'true',
+      allowedHosts: ['dungeon-gacha.onrender.com']
     },
   };
 });
