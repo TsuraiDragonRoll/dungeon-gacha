@@ -34,7 +34,7 @@ export enum MonsterType {
 export interface Card {
   id: string;
   name: string;
-  type: "HERO" | "GEAR";
+  type: "HERO" | "GEAR" | "BONUS";
   rarity: Rarity;
   level: number;
   ability: string;
@@ -55,6 +55,8 @@ export interface Tile {
   isOccupied: boolean; // Occupied by hero or building
   occupiedByHeroId?: string | null;
   infected?: boolean;
+  occupationTokenOwnerId?: string | null;  // Forced Occupation bonus card
+  occupationTokenRoundsLeft?: number;      // Counts down each round
 }
 
 export interface Player {
@@ -80,6 +82,9 @@ export interface Player {
   color: string;
   tilesCount: number;
   bidAmount?: number;
+  earnedBonusThisAttack: boolean;          // Max 1 bonus card per attack phase
+  monstersDefeatedThisAttack: number;      // Running count toward bonus trigger
+  enemyCapturesThisAttack: number;         // Running count toward bonus trigger
 }
 
 export interface GameState {

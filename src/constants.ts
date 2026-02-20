@@ -78,4 +78,66 @@ export const GEAR_CARDS: Partial<Card>[] = [
   { id: "g_decree", name: "King’s Decree", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Gives you +10 Gemstone Value during the Flagpole Bidding War.", phase: "P", description: "Strategic Gear" },
 ];
 
-export const BONUS_CARDS: Partial<Card>[] = [];
+export const BONUS_CARDS: Partial<Card>[] = [
+  {
+    id: "bc_mercenary",
+    name: "Mercenary Contract",
+    type: "BONUS" as any,
+    rarity: Rarity.SPECIAL,
+    level: 1,
+    ability: "Summon 1 Hero from your hand for free (0 Gems, 0 Mana). Ignores Barracks limit for this use.",
+    phase: "P",
+    description: "Instant Bonus Card",
+  },
+  {
+    id: "bc_caravan",
+    name: "Reinforced Caravan",
+    type: "BONUS" as any,
+    rarity: Rarity.SPECIAL,
+    level: 1,
+    ability: "Immediately gain 4 Wood, 2 Clay, and 1 Stone from the bank.",
+    phase: "P",
+    description: "Instant Bonus Card",
+  },
+  {
+    id: "bc_tamer",
+    name: "Monster Tamer",
+    type: "BONUS" as any,
+    rarity: Rarity.SPECIAL,
+    level: 1,
+    ability: "Defeat one adjacent monster instantly without dealing damage.",
+    phase: "A",
+    description: "Attack Phase Bonus Card",
+  },
+  {
+    id: "bc_siege",
+    name: "Siege Engineering",
+    type: "BONUS" as any,
+    rarity: Rarity.SPECIAL,
+    level: 1,
+    ability: "Build a Wall or Moat for free on any cleared tile you occupy. Does not use an action space.",
+    phase: "P",
+    description: "Prep Phase Bonus Card",
+  },
+  {
+    id: "bc_cache",
+    name: "Hidden Cache",
+    type: "BONUS" as any,
+    rarity: Rarity.SPECIAL,
+    level: 1,
+    ability: "Gain 15 Gemstones. Keep hidden to surprise opponents during the Bidding War.",
+    phase: "P",
+    description: "Instant Bonus Card",
+  },
+  {
+    id: "bc_occupy",
+    name: "Forced Occupation",
+    type: "BONUS" as any,
+    rarity: Rarity.SPECIAL,
+    level: 1,
+    ability: "Place an Occupation Token on any cleared square you don't own. It stays occupied for 2 rounds, counting toward your tile total.",
+    phase: "A",
+    description: "Attack Phase Bonus Card",
+  },
+];
+
