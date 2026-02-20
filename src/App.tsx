@@ -1185,17 +1185,17 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
       whileHover={{ scale: 1.05, zIndex: 10 }}
       whileTap={{ scale: 0.95 }}
       onClick={onClick}
-      onHoverStart={() => {
+      onMouseEnter={() => {
         if (tileRef.current) {
           const rect = tileRef.current.getBoundingClientRect();
           setTooltipPos({
-            top: rect.top - 8,   // will be shifted up via translateY(-100%)
+            top: rect.top - 8,   // shifted up via translateY(-100%)
             left: rect.left + rect.width / 2,
           });
         }
         setHovered(true);
       }}
-      onHoverEnd={() => setHovered(false)}
+      onMouseLeave={() => setHovered(false)}
       className={cn(
         "w-8 h-8 md:w-12 md:h-12 rounded-sm flex items-center justify-center relative transition-all",
         owner ? "shadow-inner" : "bg-[#1a1c21] hover:bg-white/10",
@@ -1382,18 +1382,63 @@ function ActionButton(props: { action: any, onClick: () => void, disabled?: bool
     costLabel = `Cost: ${action.cost} Gems + ${me.summonCountThisRound} Mana`;
   }
 
+  // Determine if this action grants a stockpileable resource and what the player currently holds
+  const resourceInfo: { key: string; label: string; color: string; icon: string } | null = (() => {
+    if (action.reward?.wood != null) return { key: "wood", label: "Wood", color: "#d97706", icon: "🌲" };
+    if (action.reward?.clay != null) return { key: "clay", label: "Clay", color: "#b45309", icon: "🧱" };
+    if (action.reward?.stone != null) return { key: "stone", label: "Stone", color: "#94a3b8", icon: "⛰" };
+    if (action.reward?.mana != null) return { key: "mana", label: "Mana", color: "#60a5fa", icon: "⚡" };
+    return null;
+  })();
+
+  const currentStock = resourceInfo && me ? (me[resourceInfo.key] ?? 0) : null;
+  const pendingReward = resourceInfo
+    ? (action.reward[resourceInfo.key] ?? 0)
+    : null;
+
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "p-3 rounded-xl border text-left transition-all relative overflow-hidden group",
+        "p-3 rounded-xl border text-left transition-all relative overflow-hidden group flex flex-col gap-1.5",
         active ? "bg-emerald-500 border-emerald-400 text-black" : "bg-white/5 border-white/10 hover:bg-white/10",
         disabled && "opacity-30 cursor-not-allowed grayscale"
       )}
     >
-      <div className="text-[10px] font-bold uppercase tracking-tighter opacity-50 mb-1">{costLabel}</div>
+      <div className="text-[10px] font-bold uppercase tracking-tighter opacity-50">{costLabel}</div>
       <div className="text-xs font-bold leading-tight">{action.label}</div>
+
+      {/* Resource accumulation badge */}
+      {resourceInfo && currentStock !== null && pendingReward !== null && (
+        <div className="flex items-center justify-between mt-0.5 gap-1">
+          {/* Current stock */}
+          <div
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[9px] font-bold font-mono"
+            style={{
+              color: resourceInfo.color,
+              borderColor: `${resourceInfo.color}44`,
+              backgroundColor: `${resourceInfo.color}15`,
+            }}
+          >
+            <span>{resourceInfo.icon}</span>
+            <span>{currentStock}</span>
+          </div>
+          {/* Pending reward */}
+          <div
+            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md border text-[9px] font-bold font-mono"
+            style={{
+              color: "#ffffff",
+              borderColor: `${resourceInfo.color}55`,
+              backgroundColor: `${resourceInfo.color}20`,
+            }}
+          >
+            <span className="text-[8px] opacity-60">+</span>
+            <span>{pendingReward}</span>
+          </div>
+        </div>
+      )}
+
       {action.used && (
         <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
           <span className="text-[10px] font-bold uppercase tracking-widest text-red-500 rotate-12 border border-red-500 px-2">Used</span>
@@ -1402,6 +1447,7 @@ function ActionButton(props: { action: any, onClick: () => void, disabled?: bool
     </button>
   );
 }
+
 
 // ── Rulebook ──────────────────────────────────────────────────────────────────
 function RuleSection({ title, children }: { title: string; children: React.ReactNode }) {
