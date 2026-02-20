@@ -5,6 +5,11 @@ import {defineConfig, loadEnv} from 'vite';
 
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
+  preview: {
+    allowedHosts: ['dungeon-gacha.onrender.com'], // Add your specific Render host
+    host: '0.0.0.0', // Ensure it listens on all addresses
+    port: 8080,      // Match the port used in your server
+  }
   return {
     plugins: [react(), tailwindcss()],
     define: {
