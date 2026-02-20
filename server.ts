@@ -13,7 +13,7 @@ async function startServer() {
     cors: { origin: "*" },
   });
 
-  const PORT = 3000;
+  const PORT = process.env.PORT || 8080;
   const games = new Map<string, any>();
 
   function shuffle(array: any[]) {
@@ -49,7 +49,7 @@ async function startServer() {
         heroDeck.push({ ...card, id: `${card.id}_${i}` });
       }
     });
-    
+
     const gearDeck: any[] = [];
     GEAR_CARDS.forEach(card => {
       gearDeck.push({ ...card });
@@ -112,13 +112,13 @@ async function startServer() {
       if (game.players.every((p: any) => p.finishedPrep)) {
         game.status = Phase.ATTACK;
         game.currentPlayerIndex = 0;
-        
+
         // Monster reclamation logic
         game.board.forEach((tile: any) => {
           if (!tile.isOccupied && tile.ownerId !== null) {
             const player = game.players.find((p: any) => p.id === tile.ownerId);
             if (player) player.tilesCount--;
-            
+
             const monster = getMonsterForTile(tile.id);
             tile.ownerId = null;
             tile.structure = null;
@@ -134,7 +134,7 @@ async function startServer() {
         });
 
         game.logs.push("All players finished preparation. Attack phase begins!");
-        
+
         // Mana Ring Gear
         game.players.forEach(p => {
           if (p.gear.some((g: any) => g.id === "g_ring")) {
@@ -149,7 +149,7 @@ async function startServer() {
       if (game.currentPlayerIndex === 0) {
         game.status = Phase.PREPARATION;
         game.round++;
-        
+
         game.board.forEach((tile: any) => {
           // Tiles with structures are always occupied.
           // Starting tiles are also always occupied.
@@ -178,7 +178,7 @@ async function startServer() {
 
         game.players.forEach((p: any) => {
           p.gemstones += calculateIncome(p.tilesCount);
-          
+
           // Tax Box Gear
           if (p.gear.some((g: any) => g.id === "g_taxbox")) {
             p.gemstones += p.tilesCount;
@@ -269,7 +269,7 @@ async function startServer() {
       const game = games.get(roomId);
       if (game && game.players.length >= 2) {
         game.status = Phase.DRAFTING;
-        
+
         // Setup starting tiles
         game.players.forEach((p: any, idx: number) => {
           const tiles = getStartingTiles(idx);
@@ -309,12 +309,12 @@ async function startServer() {
       if (cardIndex === -1) return;
 
       const card = player.draftHand.splice(cardIndex, 1)[0];
-      
+
       // Card upgrades: check if player already has this card (summoned or drafted)
       const existingInDraft = player.draftedCards.find((c: any) => c.name === card.name);
       const existingInHeroes = player.heroes.find((h: any) => h.name === card.name);
       const existingCard = existingInDraft || existingInHeroes;
-      
+
       if (existingCard) {
         existingCard.level = Math.min(2, existingCard.level + 1);
         game.logs.push(`${player.name} upgraded ${card.name} to Level ${existingCard.level}!`);
@@ -383,7 +383,7 @@ async function startServer() {
       if (actionId === "p_wall" && player.wood < 2) return;
       if (actionId === "p_barracks" && (player.wood < 6 || player.clay < 2)) return;
       if (actionId === "p_smithy" && (player.clay < 1 || player.stone < 2)) return;
-      
+
       // New requirements
       if (action.reward.gear) {
         const hasSmithy = game.board.some((t: any) => t.ownerId === player.id && t.structure === StructureType.SMITHY);
@@ -391,7 +391,7 @@ async function startServer() {
           game.logs.push(`${player.name} needs a Smithy to create Gear!`);
           return;
         }
-        
+
         const cardIdx = player.draftedCards.findIndex((c: any) => c.id === cardId && c.type === "GEAR");
         if (cardIdx === -1) {
           game.logs.push(`${player.name} must select a Gear card from their drafted hand!`);
@@ -438,7 +438,7 @@ async function startServer() {
         if (player.totalSummons % 10 === 0) {
           const barracksCount = game.board.filter((t: any) => t.ownerId === player.id && t.structure === StructureType.BARRACKS).length;
           const maxHeroes = barracksCount * 3;
-          
+
           if (player.heroes.length < maxHeroes) {
             const specialHero = game.specialDeck.pop();
             if (specialHero) {
@@ -462,14 +462,14 @@ async function startServer() {
           game.logs.push("The center square must be cleared of monsters to build the Flagpole!");
           return;
         }
-        
+
         game.status = Phase.BIDDING_WAR;
         game.logs.push("The Flagpole Bidding War has commenced!");
         game.players.forEach(p => p.ready = false);
         io.to(roomId).emit("game_updated", game);
         return;
       }
-      
+
       // Execute action
       player.gemstones -= finalCost;
       if (action.reward.wood) player.wood += action.reward.wood;
@@ -502,9 +502,9 @@ async function startServer() {
 
       action.used = true;
       game.logs.push(`${player.name} performed: ${action.label}`);
-      
+
       advanceTurn(game);
-      
+
       io.to(roomId).emit("game_updated", game);
     });
 
@@ -563,7 +563,7 @@ async function startServer() {
           return a.id.localeCompare(b.id);
         });
         const winner = sorted[0];
-        
+
         if (winner.bidAmount === -1) {
           game.logs.push("No one could afford the Bidding War requirements! The game continues.");
           game.status = Phase.PREPARATION;
@@ -592,7 +592,7 @@ async function startServer() {
       if (player.id !== socket.id) return;
 
       const tile = game.board[tileId];
-      
+
       // Handle 'Occupy' ability on owned tiles
       if (tile.ownerId === player.id) {
         const hero = player.heroes.find((h: any) => h.id === heroId);
@@ -602,12 +602,12 @@ async function startServer() {
         if (tile.occupiedByHeroId === heroId) {
           tile.occupiedByHeroId = null;
           hero.abilityUsed = false;
-          
+
           // Recalculate isOccupied based on structures or starting tiles
           const playerIdx = game.players.findIndex((p: any) => p.id === player.id);
           const isStartingTile = getStartingTiles(playerIdx).includes(tileId);
           tile.isOccupied = tile.structure !== null || isStartingTile;
-          
+
           game.logs.push(`${player.name}'s ${hero.name} stopped occupying tile ${tileId}.`);
           io.to(roomId).emit("game_updated", game);
           return;
@@ -638,7 +638,7 @@ async function startServer() {
       if (x < 8) neighbors.push(tileId + 1);
       if (y > 0) neighbors.push(tileId - 9);
       if (y < 8) neighbors.push(tileId + 9);
-      
+
       const hasAdjacent = neighbors.some(n => game.board[n].ownerId === player.id);
       if (!hasAdjacent) {
         game.logs.push("You can only attack tiles adjacent to your territory!");
@@ -709,12 +709,12 @@ async function startServer() {
         player.mana -= cost;
         const oldOwnerId = tile.ownerId;
         const oldOwner = game.players.find((p: any) => p.id === oldOwnerId);
-        
+
         tile.ownerId = player.id;
         tile.structure = null;
         tile.isOccupied = true;
         tile.occupiedByHeroId = null;
-        
+
         player.tilesCount++;
         if (oldOwner) {
           oldOwner.tilesCount--;
@@ -776,7 +776,7 @@ async function startServer() {
       if (x < 8) neighbors.push(tileId + 1);
       if (y > 0) neighbors.push(tileId - 9);
       if (y < 8) neighbors.push(tileId + 9);
-      
+
       const hasAdjacent = neighbors.some(n => game.board[n].ownerId === player.id);
       if (!hasAdjacent) {
         game.logs.push("You can only attack monsters adjacent to your territory!");
@@ -788,7 +788,7 @@ async function startServer() {
       tile.monsterHP -= damage;
 
       game.logs.push(`${player.name} used ${manaToUse} Mana to deal ${damage} damage to the ${tile.monsterType}!`);
-      
+
       if (tile.monsterHP <= 0) {
         tile.monsterType = null;
         tile.monsterHP = 0;
@@ -796,7 +796,7 @@ async function startServer() {
         tile.ownerId = player.id;
         tile.isOccupied = false; // Liberated, not occupied
         tile.occupiedByHeroId = null;
-        
+
         player.tilesCount++;
         player.gemstones += 3;
         game.logs.push(`${player.name} defeated the monster and captured tile ${tileId}!`);

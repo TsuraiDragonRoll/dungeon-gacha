@@ -5,7 +5,7 @@ import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  
+
   return {
     plugins: [react(), tailwindcss()],
     define: {
@@ -23,9 +23,9 @@ export default defineConfig(({ mode }) => {
       port: 8080
     },
     server: {
-      // Keep HMR settings for local development
+      host: '0.0.0.0',
+      allowedHosts: ['dungeon-gacha.onrender.com'],
       hmr: process.env.DISABLE_HMR !== 'true',
-      allowedHosts: ['dungeon-gacha.onrender.com']
     },
   };
 });

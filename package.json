@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "start": "vite preview --port $PORT --host 0.0.0.0"
+    "start": "tsx server.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
