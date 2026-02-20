@@ -609,6 +609,13 @@ async function startServer() {
       if (action.reward.stone) player.stone += action.reward.stone;
       if (action.reward.mana) player.mana += manaAmount;
 
+      // Reset accumulation spaces to base value
+      if (action.id === "p_lumber") action.reward.wood = 4;
+      if (action.id === "p_clay") action.reward.clay = 1;
+      if (action.id === "p_stone") action.reward.stone = 1;
+      if (action.id === "s_lumber") action.reward.wood = 2;
+      if (action.id === "s_stone") action.reward.stone = 1;
+
       if (action.reward.structure) {
         const tile = game.board[tileId];
         if (tile && tile.ownerId === player.id && !tile.structure) {
@@ -659,6 +666,19 @@ async function startServer() {
         game.currentPlayerIndex = 0;
         game.logs.push("All players finished preparation. Attack phase begins!");
       }
+
+      io.to(roomId).emit("game_updated", game);
+    });
+
+    socket.on("undo_finish_prep", (roomId) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.PREPARATION) return;
+
+      const player = game.players.find((p: any) => p.id === socket.id);
+      if (!player || !player.finishedPrep) return;
+
+      player.finishedPrep = false;
+      game.logs.push(`${player.name} resumed preparation.`);
 
       io.to(roomId).emit("game_updated", game);
     });
@@ -796,7 +816,7 @@ async function startServer() {
         if (hero.id.startsWith("mordecai")) damage = hero.level === 1 ? 7 : 12;
         if (hero.id.startsWith("hero_leg")) damage = hero.level === 1 ? 9 : 15;
         if (hero.id.startsWith("dax")) {
-          damage = 1;
+          damage = hero.level === 1 ? 1 : 2;
           if (tile.monsterType === MonsterType.GIANT || tile.monsterType === MonsterType.DRAGON || tile.monsterType === MonsterType.DEMON_KING) {
             damage += 2;
           }
@@ -955,6 +975,34 @@ async function startServer() {
       io.to(roomId).emit("game_updated", game);
     });
 
+    socket.on("refresh_hero", ({ roomId, sourceId, targetId }) => {
+      const game = games.get(roomId);
+      if (!game) return;
+
+      const player = game.players.find((p: any) => p.id === socket.id);
+      if (!player) return;
+
+      // Find the source of the refresh (either a hero like Vera or a Gear like Medkit)
+      const sourceHero = player.heroes.find((h: any) => h.id === sourceId);
+      const sourceGear = player.gear.find((g: any) => g.id === sourceId);
+      const source = sourceHero || sourceGear;
+
+      const targetHero = player.heroes.find((h: any) => h.id === targetId);
+
+      if (!source || !targetHero) return;
+      if (source.abilityUsed) {
+        game.logs.push(`${source.name}'s ability was already used!`);
+        return;
+      }
+
+      targetHero.abilityUsed = false;
+      source.abilityUsed = true;
+
+      game.logs.push(`${player.name} used ${source.name} to refresh the ability of ${targetHero.name}!`);
+
+      io.to(roomId).emit("game_updated", game);
+    });
+
     socket.on("use_bonus_card", ({ roomId, cardId, tileId, cardToSummonId, structureType }) => {
       const game = games.get(roomId);
       if (!game) return;
@@ -980,7 +1028,16 @@ async function startServer() {
         // 0 mana cost, ignores barracks limit
         const hero = player.draftedCards.splice(heroIdx, 1)[0];
         hero.abilityUsed = false;
-        player.heroes.push(hero);
+
+        const existingHero = player.heroes.find((h: any) => h.name === hero.name);
+        if (existingHero) {
+          existingHero.level = Math.min(2, existingHero.level + 1);
+          game.logs.push(`${player.name} played Mercenary Contract and summoned ${hero.name} again — upgraded to Level ${existingHero.level}!`);
+        } else {
+          player.heroes.push(hero);
+          game.logs.push(`${player.name} played Mercenary Contract and summoned ${hero.name} for free!`);
+        }
+
         player.summonCountThisRound++;
         player.totalSummons++;
         if (player.draftedCards.length === 0) {
@@ -988,7 +1045,6 @@ async function startServer() {
           game.logs.push(`${player.name} ran out of cards and drew 6 new ones!`);
         }
         player.bonusCards.splice(cardIdx, 1);
-        game.logs.push(`${player.name} played Mercenary Contract and summoned ${hero.name} for free!`);
       }
 
       // ── Reinforced Caravan (prep phase, free) ───────────────────────────────
