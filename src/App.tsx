@@ -137,13 +137,25 @@ export default function App() {
     }
   };
 
-  const handleCardClick = (cardId: string) => {
-    if (gameState?.status === Phase.ATTACK) {
-      setSelectedCard(cardId);
-    } else if (selectedAction && (selectedAction.includes("summon") || selectedAction.includes("gear"))) {
+  const handleDraftedCardClick = (cardId: string) => {
+    if (selectedAction && (selectedAction.includes("summon") || selectedAction.includes("gear"))) {
       socket.emit("prep_action", { roomId, actionId: selectedAction, cardId });
       setSelectedAction(null);
       setSelectedCard(null);
+    }
+  };
+
+  const handleActiveCardClick = (cardId: string) => {
+    if (selectedCard && (selectedCard.startsWith("vera") || selectedCard.startsWith("g_medkit"))) {
+      socket.emit("refresh_hero", { roomId, sourceId: selectedCard, targetId: cardId });
+      setSelectedCard(null);
+      return;
+    }
+    // Toggle off or select
+    if (selectedCard === cardId) {
+      setSelectedCard(null);
+    } else {
+      setSelectedCard(cardId);
     }
   };
 
@@ -161,6 +173,10 @@ export default function App() {
 
   const handleFinishPrep = () => {
     socket.emit("finish_prep", roomId);
+  };
+
+  const handleUndoFinishPrep = () => {
+    socket.emit("undo_finish_prep", roomId);
   };
 
   const handleBonusCardPlay = (cardId: string) => {
@@ -513,14 +529,13 @@ export default function App() {
             <div className="w-48 flex flex-col gap-3 pr-6 border-r border-white/5">
               <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30">Prep Status</h3>
               <button
-                onClick={handleFinishPrep}
-                disabled={me?.finishedPrep}
+                onClick={me?.finishedPrep ? handleUndoFinishPrep : handleFinishPrep}
                 className={cn(
-                  "w-full py-3 rounded-xl font-bold uppercase tracking-widest text-[10px] transition-all",
-                  me?.finishedPrep ? "bg-white/5 text-white/20 border border-white/5" : "bg-red-600/20 hover:bg-red-600/30 text-red-500 border border-red-500/30"
+                  "w-full py-3 rounded-xl font-bold uppercase tracking-widest text-[10px] transition-all bg-red-600/20 hover:bg-red-600/30 text-red-500 border border-red-500/30",
+                  me?.finishedPrep && "bg-orange-600/20 hover:bg-orange-600/30 text-orange-500 border-orange-500/30"
                 )}
               >
-                {me?.finishedPrep ? "Prep Finished" : "Finish Prep"}
+                {me?.finishedPrep ? "Undo Finish Prep" : "Finish Prep"}
               </button>
               <p className="text-[9px] text-white/30 leading-tight">
                 Clicking this means you won't take any more actions this round.
@@ -607,7 +622,7 @@ export default function App() {
                 <CardView
                   key={c.id}
                   card={c}
-                  onSelect={() => handleCardClick(c.id)}
+                  onSelect={() => handleDraftedCardClick(c.id)}
                   disabled={!selectedAction || (!selectedAction.includes("summon") && c.type === "HERO") || (!selectedAction.includes("gear") && c.type === "GEAR")}
                 />
               ))}
@@ -623,7 +638,7 @@ export default function App() {
                   <CardView
                     key={item.id}
                     card={item}
-                    onSelect={() => handleCardClick(item.id)}
+                    onSelect={() => handleActiveCardClick(item.id)}
                     active={selectedCard === item.id}
                     disabled={gameState.status === Phase.ATTACK && !!item.abilityUsed}
                     spent={!!item.abilityUsed}
@@ -658,12 +673,12 @@ function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolea
   const rowRef = React.useRef<HTMLDivElement>(null);
   const [tooltipPos, setTooltipPos] = React.useState({ top: 0, left: 0 });
 
-  const handleMouseEnter = () => {
-    if (rowRef.current) {
-      const rect = rowRef.current.getBoundingClientRect();
-      setTooltipPos({ top: rect.top, left: rect.right + 8 });
-    }
+  const handleMouseEnter = (e: React.MouseEvent) => {
+    setTooltipPos({ top: e.clientY, left: e.clientX + 16 });
     setHovered(true);
+  };
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (hovered) setTooltipPos({ top: e.clientY, left: e.clientX + 16 });
   };
 
   const resources = [
@@ -679,6 +694,7 @@ function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolea
       ref={rowRef}
       className="relative"
       onMouseEnter={handleMouseEnter}
+      onMouseMove={handleMouseMove}
       onMouseLeave={() => setHovered(false)}
     >
       <div className={cn(
@@ -1185,15 +1201,22 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
       whileHover={{ scale: 1.05, zIndex: 10 }}
       whileTap={{ scale: 0.95 }}
       onClick={onClick}
-      onMouseEnter={() => {
-        if (tileRef.current) {
-          const rect = tileRef.current.getBoundingClientRect();
+      onMouseEnter={(e) => {
+        // e.clientX / e.clientY are exactly what position: fixed needs,
+        // ignoring scroll completely.
+        setTooltipPos({
+          top: e.clientY - 12,
+          left: e.clientX,
+        });
+        setHovered(true);
+      }}
+      onMouseMove={(e) => {
+        if (hovered) {
           setTooltipPos({
-            top: rect.top - 8,   // shifted up via translateY(-100%)
-            left: rect.left + rect.width / 2,
+            top: e.clientY - 12,
+            left: e.clientX,
           });
         }
-        setHovered(true);
       }}
       onMouseLeave={() => setHovered(false)}
       className={cn(
@@ -1234,16 +1257,16 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
       <AnimatePresence>
         {hovered && tile.monsterType && (
           <motion.div
-            initial={{ opacity: 0, y: 4, scale: 0.92 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 4, scale: 0.92 }}
-            transition={{ duration: 0.13 }}
+            initial={{ opacity: 0, scale: 0.92 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.92 }}
+            transition={{ duration: 0.1 }}
             className="pointer-events-none z-[9999]"
             style={{
               position: "fixed",
               top: tooltipPos.top,
               left: tooltipPos.left,
-              transform: "translate(-50%, -100%)",
+              transform: "translate(-50%, -100%)", // perfectly offsets the mouse cursor
               minWidth: "88px",
             }}
           >
