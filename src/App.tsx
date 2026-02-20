@@ -27,7 +27,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const socket: Socket = io();
+const socket: Socket = io("https://dungeon-gacha.onrender.com");
 
 export default function App() {
   const [gameState, setGameState] = useState<GameState | null>(null);
