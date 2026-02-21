@@ -299,13 +299,12 @@ export default function App() {
   const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === mySocketId;
 
   return (
-    <div className="min-h-screen bg-[#0a0502] text-white flex flex-col md:flex-row font-sans selection:bg-emerald-500/30">
-      {/* Sidebar: Stats & Logs */}
-      <div className="w-full md:w-80 bg-[#151619] border-r border-white/5 flex flex-col h-screen">
+    <div className="h-screen bg-[#0a0502] text-white flex flex-row font-sans selection:bg-emerald-500/30 overflow-hidden">      {/* Sidebar: Stats & Logs */}
+      <div className="w-56 xl:w-64 bg-[#151619] border-r border-white/5 flex flex-col h-full shrink-0">
         <div className="p-6 border-bottom border-white/5">
-          <div className="flex items-center gap-2 mb-6">
-            <Castle className="w-6 h-6 text-emerald-500" />
-            <span className="font-bold tracking-tighter text-xl uppercase">Dungeon Floor {gameState.round}</span>
+          <div className="flex items-center gap-2 mb-3">
+            <Castle className="w-5 h-5 text-emerald-500" />
+            <span className="font-bold tracking-tighter text-base uppercase">Floor {gameState.round}</span>
           </div>
 
           {me && (
@@ -338,7 +337,7 @@ export default function App() {
           </motion.div>
         </div>
 
-        <div className="p-6 bg-black/40 border-t border-white/5 h-48 overflow-y-auto">
+        <div className="p-3 bg-black/40 border-t border-white/5 h-36 overflow-y-auto shrink-0">
           <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/30 mb-2">Chronicles</h3>
           {gameState.logs.slice(-10).reverse().map((log, i) => (
             <p key={i} className="text-[11px] text-white/50 mb-1 leading-relaxed">
@@ -349,11 +348,11 @@ export default function App() {
       </div>
 
       {/* Main Area: Board & Controls */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+      <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
         {/* Header / Phase Info */}
         <div className="border-b border-white/5 bg-[#151619]/50 backdrop-blur-xl">
           {/* Row 1: phase + turn + action button */}
-          <div className="h-12 flex items-center justify-between px-8">
+          <div className="h-10 flex items-center justify-between px-4">
             <div className="flex items-center gap-4">
               <div className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[10px] font-bold uppercase tracking-widest">
                 {gameState.status}
@@ -485,62 +484,79 @@ export default function App() {
             />
           ) : gameState.status === Phase.DRAFTING ? (
             <div className="w-full max-w-5xl overflow-y-auto">
-              <h2 className="text-center text-xl font-bold mb-2 uppercase tracking-widest">Draft your Arsenal</h2>
-              <p className="text-center text-white/40 text-xs mb-6">Pick 1 hero and 1 gear, then hands pass to the next player.</p>
-
-              {/* Hero hand */}
-              <div className="mb-6">
-                <div className={cn(
-                  "flex items-center gap-2 mb-3",
-                )}>
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-white/30">Heroes</span>
-                  <span className={cn(
-                    "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest border transition-all",
-                    me?.draftedHero ? "bg-emerald-500/20 border-emerald-500 text-emerald-500" : "bg-white/5 border-white/10 text-white/30"
-                  )}>
-                    {me?.draftedHero ? "✓ Picked" : "Pick 1"}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                  {me?.draftHeroHand.map(card => (
-                    <CardView
-                      key={card.id}
-                      card={card}
-                      onSelect={() => handleDraft(card.id)}
-                      disabled={me.ready || !!me.draftedHero}
+              <AnimatePresence mode="wait">
+                {me?.ready ? (
+                  <motion.div
+                    key="waiting"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="flex flex-col items-center justify-center gap-4 py-20"
+                  >
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                      className="w-10 h-10 rounded-full border-2 border-emerald-500/20 border-t-emerald-500"
                     />
-                  ))}
-                </div>
-              </div>
-
-              {/* Gear hand */}
-              <div className="mb-6">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-white/30">Gear</span>
-                  <span className={cn(
-                    "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest border transition-all",
-                    me?.draftedGear ? "bg-blue-500/20 border-blue-500 text-blue-500" : "bg-white/5 border-white/10 text-white/30"
-                  )}>
-                    {me?.draftedGear ? "✓ Picked" : "Pick 1"}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                  {me?.draftGearHand.map(card => (
-                    <CardView
-                      key={card.id}
-                      card={card}
-                      onSelect={() => handleDraft(card.id)}
-                      disabled={me.ready || !!me.draftedGear}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {me?.ready && <p className="text-center mt-4 text-emerald-500 animate-pulse">Waiting for other players...</p>}
+                    <p className="text-emerald-500 text-sm uppercase tracking-widest font-bold">Waiting for other players...</p>
+                    <p className="text-white/20 text-xs">Hands will pass once everyone picks</p>
+                  </motion.div>
+                ) : (me?.draftStep === "hero" || !me?.draftStep) ? (
+                  <motion.div
+                    key="hero-pick"
+                    initial={{ opacity: 0, x: 40 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -40 }}
+                    transition={{ duration: 0.25 }}
+                  >
+                    <div className="text-center mb-8">
+                      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold uppercase tracking-widest mb-3">
+                        Step 1 of 2 · Heroes
+                      </div>
+                      <h2 className="text-2xl font-black uppercase tracking-widest text-white mb-1">Choose your Hero</h2>
+                      <p className="text-white/30 text-xs">Pick 1 hero from your hand. The rest will pass to the next player.</p>
+                    </div>
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4">
+                      {me?.draftHeroHand.map(card => (
+                        <CardView
+                          key={card.id}
+                          card={card}
+                          onSelect={() => handleDraft(card.id)}
+                        />
+                      ))}
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="gear-pick"
+                    initial={{ opacity: 0, x: 40 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -40 }}
+                    transition={{ duration: 0.25 }}
+                  >
+                    <div className="text-center mb-8">
+                      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-bold uppercase tracking-widest mb-3">
+                        Step 2 of 2 · Gear
+                      </div>
+                      <h2 className="text-2xl font-black uppercase tracking-widest text-white mb-1">Equip your Gear</h2>
+                      <p className="text-white/30 text-xs">Pick 1 gear item from your hand. The rest will pass to the next player.</p>
+                    </div>
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4">
+                      {me?.draftGearHand.map(card => (
+                        <CardView
+                          key={card.id}
+                          card={card}
+                          onSelect={() => handleDraft(card.id)}
+                        />
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           ) : (
-            <div className="relative group">
-              <div className="grid grid-cols-9 gap-1 bg-white/5 p-1 rounded-lg border border-white/10 shadow-2xl">
+            <div className="relative group flex items-center justify-center">
+              <div className="grid grid-cols-9 gap-0.5 bg-white/5 p-1 rounded-lg border border-white/10 shadow-2xl board-grid">
                 {gameState.board.map((tile, i) => (
                   <TileView
                     key={i}
@@ -556,7 +572,7 @@ export default function App() {
         </div>
 
         {/* Bottom Panel: Actions / Hand */}
-        <div className="h-64 border-t border-white/5 bg-[#151619] p-6 flex gap-6 overflow-x-auto">
+        <div className="shrink-0 border-t border-white/5 bg-[#151619] p-3 flex gap-4 overflow-x-auto" style={{ minHeight: '10rem', maxHeight: '14rem' }}>
           {gameState.status === Phase.ATTACK && isMyTurn && selectedTile !== null && gameState.board[selectedTile].monsterType !== null && (
             <div className="w-48 flex flex-col gap-3 pr-6 border-r border-white/5">
               <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30">Mana Attack</h3>

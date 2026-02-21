@@ -1,1 +1,26 @@
 @import "tailwindcss";
+
+/* ── Responsive scaling ──────────────────────────────────────────── */
+/* Shrink all rem-based sizes proportionally on smaller viewports.    */
+/* 16px = 100vh breakpoint, scales down to 13px on 768px-ish screens */
+:root {
+  font-size: clamp(13px, 1.1vw, 16px);
+}
+
+/* Full-bleed layout helpers */
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Make the grid board always square and fill available space */
+.board-grid {
+  aspect-ratio: 1 / 1;
+  width: min(100%, 60vh);
+}
+
+/* Thin custom scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
