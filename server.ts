@@ -213,6 +213,40 @@ async function startServer() {
           p.heroes.forEach((h: any) => h.abilityUsed = false);
           p.gear.forEach((g: any) => g.abilityUsed = false);
 
+          // Hero Resource Generation at start of prep phase
+          p.heroes.forEach((h: any) => {
+            if (h.id.startsWith("bryn")) {
+              p.stone += 1;
+              game.logs.push(`${p.name}'s ${h.name} supplied 1 Stone.`);
+            } else if (h.id.startsWith("trove")) {
+              p.gemstones += 4;
+              game.logs.push(`${p.name}'s ${h.name} supplied 4 Gemstones.`);
+            } else if (h.id.startsWith("grog") || h.id.startsWith("zale")) {
+              // Find tile occupied by this hero
+              const occupiedTile = game.board.find((t: any) => t.occupiedByHeroId === h.id);
+              if (occupiedTile) {
+                if (h.id.startsWith("grog") && occupiedTile.monsterType === null) {
+                  p.stone += 1;
+                  game.logs.push(`${p.name}'s ${h.name} supplied 1 Stone (occupying monster-cleared square).`);
+                } else if (h.id.startsWith("zale")) {
+                  // Check adjacent for moat
+                  const tid = occupiedTile.id;
+                  const x = tid % 9, y = Math.floor(tid / 9);
+                  const ns = [];
+                  if (x > 0) ns.push(tid - 1);
+                  if (x < 8) ns.push(tid + 1);
+                  if (y > 0) ns.push(tid - 9);
+                  if (y < 8) ns.push(tid + 9);
+                  const adjMoat = ns.some(n => game.board[n].structure === StructureType.MOAT);
+                  if (adjMoat) {
+                    p.gemstones += 2;
+                    game.logs.push(`${p.name}'s ${h.name} supplied 2 Gemstones (adjacent to Moat).`);
+                  }
+                }
+              }
+            }
+          });
+
           // Reset bonus-card attack trackers for the new round
           p.earnedBonusThisAttack = false;
           p.monstersDefeatedThisAttack = 0;
@@ -1122,40 +1156,7 @@ async function startServer() {
         if (t.structure) { game.logs.push(`${player.name}: tile ${id} already has a structure (${t.structure}).`); io.to(roomId).emit("game_updated", game); return; }
       }
 
-      // ── Connectivity check (BFS) ─────────────────────────────────────────
-      const isAdjacent = (a: number, b: number): boolean => {
-        const rowA = Math.floor(a / 9), colA = a % 9;
-        const rowB = Math.floor(b / 9), colB = b % 9;
-        return (rowA === rowB && Math.abs(colA - colB) === 1) ||
-          (colA === colB && Math.abs(rowA - rowB) === 1);
-      };
-
-      if (ids.length > 1) {
-        // Anchor nodes = selected tiles + existing player-owned walls
-        const existingWallIds: number[] = (game.board as any[])
-          .filter(t => t.ownerId === player.id && t.structure === StructureType.WALL)
-          .map(t => t.id);
-        const allNodes = new Set<number>([...ids, ...existingWallIds]);
-
-        const visited = new Set<number>([ids[0]]);
-        const queue = [ids[0]];
-        while (queue.length > 0) {
-          const cur = queue.shift()!;
-          for (const node of allNodes) {
-            if (!visited.has(node) && isAdjacent(cur, node)) {
-              visited.add(node);
-              queue.push(node);
-            }
-          }
-        }
-        for (const id of ids) {
-          if (!visited.has(id)) {
-            game.logs.push(`${player.name}: walls must be connected — tile ${id} is isolated. Try adding a connecting tile.`);
-            io.to(roomId).emit("game_updated", game);
-            return;
-          }
-        }
-      }
+      // Removed BFS connectivity check to allow free placement anywhere on owned territory
 
       // ── Place all walls ──────────────────────────────────────────────────
       for (const id of ids) {
@@ -1347,7 +1348,7 @@ async function startServer() {
         if (hero.id.startsWith("night")) damage = hero.level === 1 ? 4 : 6;
         if (hero.id.startsWith("ignis")) damage = hero.level === 1 ? 6 : 8;
         if (hero.id.startsWith("mordecai")) damage = hero.level === 1 ? 7 : 12;
-        if (hero.id.startsWith("hero_leg")) damage = hero.level === 1 ? 9 : 15;
+        if (hero.id.startsWith("hero_leg")) damage = hero.level === 1 ? 5 : 8;
         if (hero.id.startsWith("dax")) {
           damage = hero.level === 1 ? 1 : 2;
           if (tile.monsterType === MonsterType.GIANT || tile.monsterType === MonsterType.DRAGON || tile.monsterType === MonsterType.DEMON_KING) {
@@ -1422,7 +1423,7 @@ async function startServer() {
           if (hero.id.startsWith("night")) damage = hero.level === 1 ? 4 : 6;
           if (hero.id.startsWith("ignis")) damage = hero.level === 1 ? 6 : 8;
           if (hero.id.startsWith("mordecai")) damage = hero.level === 1 ? 7 : 12;
-          if (hero.id.startsWith("hero_leg")) damage = hero.level === 1 ? 9 : 15;
+          if (hero.id.startsWith("hero_leg")) damage = hero.level === 1 ? 5 : 8;
           if (hero.id.startsWith("dax")) damage = hero.level === 1 ? 1 : 2;
           if (damage === 0) damage = 1;
 
@@ -1478,6 +1479,115 @@ async function startServer() {
           game.logs.push(`${player.name} earned a Bonus Card for capturing 3 enemy tiles!`);
         }
       }
+
+      io.to(roomId).emit("game_updated", game);
+      scheduleBot(game, roomId);
+    });
+
+    // ── DUAL ATTACK (Hero of the Dungeon: 5 dmg to each of 2 adjacent monsters) ──
+    socket.on("attack_dual_tile", ({ roomId, tileId1, tileId2, heroId }) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.ATTACK) return;
+
+      const player = game.players[game.currentPlayerIndex];
+      if (player.id !== socket.id) return;
+
+      const hero = player.heroes.find((h: any) => h.id === heroId);
+      if (!hero || hero.abilityUsed) {
+        game.logs.push("Select a ready Hero of the Dungeon to use this ability!");
+        io.to(roomId).emit("game_updated", game);
+        return;
+      }
+
+      const tile1 = game.board[tileId1];
+      const tile2 = game.board[tileId2];
+
+      // Both tiles must be monster tiles
+      if (!tile1 || tile1.monsterType === null) {
+        game.logs.push("First target must be a monster tile!");
+        io.to(roomId).emit("game_updated", game);
+        return;
+      }
+      if (!tile2 || tile2.monsterType === null) {
+        game.logs.push("Second target must be a monster tile!");
+        io.to(roomId).emit("game_updated", game);
+        return;
+      }
+
+      // The two target tiles must be adjacent to each other
+      const row1 = Math.floor(tileId1 / 9), col1 = tileId1 % 9;
+      const row2 = Math.floor(tileId2 / 9), col2 = tileId2 % 9;
+      const tilesAdjacent = (row1 === row2 && Math.abs(col1 - col2) === 1) ||
+        (col1 === col2 && Math.abs(row1 - row2) === 1);
+      if (!tilesAdjacent) {
+        game.logs.push("The two monster targets must be adjacent to each other!");
+        io.to(roomId).emit("game_updated", game);
+        return;
+      }
+
+      // At least one of the two tiles must be adjacent to the player's territory
+      const getNeighbors = (tid: number) => {
+        const x = tid % 9, y = Math.floor(tid / 9);
+        const ns: number[] = [];
+        if (x > 0) ns.push(tid - 1);
+        if (x < 8) ns.push(tid + 1);
+        if (y > 0) ns.push(tid - 9);
+        if (y < 8) ns.push(tid + 9);
+        return ns;
+      };
+      const adj1 = getNeighbors(tileId1).some(n => game.board[n].ownerId === player.id);
+      const adj2 = getNeighbors(tileId2).some(n => game.board[n].ownerId === player.id);
+      if (!adj1 && !adj2) {
+        game.logs.push("At least one target must be adjacent to your territory!");
+        io.to(roomId).emit("game_updated", game);
+        return;
+      }
+
+      const damage = hero.level === 1 ? 5 : 8;
+
+      // Apply damage to tile 1
+      tile1.monsterHP -= damage;
+      game.logs.push(`${player.name}'s ${hero.name} deals ${damage} damage to the ${tile1.monsterType} on tile ${tileId1}!`);
+      if (tile1.monsterHP <= (tile1.ownerId !== null ? -2 : 0)) {
+        tile1.monsterType = null;
+        tile1.monsterHP = 0;
+        tile1.monsterMaxHP = 0;
+        tile1.ownerId = player.id;
+        tile1.isOccupied = false;
+        player.tilesCount++;
+        player.gemstones += 3;
+        game.logs.push(`${player.name} claimed tile ${tileId1}!`);
+        player.monstersDefeatedThisAttack++;
+        if (player.monstersDefeatedThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck && game.bonusDeck.length > 0) {
+          const bonusCard = game.bonusDeck.pop();
+          player.bonusCards.push(bonusCard);
+          player.earnedBonusThisAttack = true;
+          game.logs.push(`${player.name} earned a Bonus Card for liberating 3 monster tiles!`);
+        }
+      }
+
+      // Apply damage to tile 2
+      tile2.monsterHP -= damage;
+      game.logs.push(`${player.name}'s ${hero.name} deals ${damage} damage to the ${tile2.monsterType} on tile ${tileId2}!`);
+      if (tile2.monsterHP <= (tile2.ownerId !== null ? -2 : 0)) {
+        tile2.monsterType = null;
+        tile2.monsterHP = 0;
+        tile2.monsterMaxHP = 0;
+        tile2.ownerId = player.id;
+        tile2.isOccupied = false;
+        player.tilesCount++;
+        player.gemstones += 3;
+        game.logs.push(`${player.name} claimed tile ${tileId2}!`);
+        player.monstersDefeatedThisAttack++;
+        if (player.monstersDefeatedThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck && game.bonusDeck.length > 0) {
+          const bonusCard = game.bonusDeck.pop();
+          player.bonusCards.push(bonusCard);
+          player.earnedBonusThisAttack = true;
+          game.logs.push(`${player.name} earned a Bonus Card for liberating 3 monster tiles!`);
+        }
+      }
+
+      hero.abilityUsed = true;
 
       io.to(roomId).emit("game_updated", game);
       scheduleBot(game, roomId);
@@ -1747,6 +1857,49 @@ async function startServer() {
       else {
         game.logs.push(`Unknown bonus card: ${card.name}`);
         return;
+      }
+
+      io.to(roomId).emit("game_updated", game);
+    });
+
+    socket.on("use_hero_ability", ({ roomId, heroId, tileId }) => {
+      const game = games.get(roomId);
+      if (!game) return;
+
+      const player = game.players.find((p: any) => p.id === socket.id);
+      if (!player) return;
+
+      const hero = player.heroes.find((h: any) => h.id === heroId);
+      if (!hero) return;
+
+      if (hero.abilityUsed) {
+        game.logs.push(`${player.name}'s ${hero.name} has already used their ability this round.`);
+        io.to(roomId).emit("game_updated", game);
+        return;
+      }
+
+      // Ewud: Build one wooden wall (Prep phase)
+      if (hero.id.startsWith("ewud")) {
+        if (game.status !== Phase.PREPARATION) {
+          game.logs.push(`${hero.name}'s ability can only be used in the Preparation phase.`);
+          io.to(roomId).emit("game_updated", game);
+          return;
+        }
+        if (tileId === undefined || tileId === null) {
+          game.logs.push("Select a tile to build on.");
+          io.to(roomId).emit("game_updated", game);
+          return;
+        }
+        const targetTile = game.board[tileId];
+        if (!targetTile || targetTile.ownerId !== player.id || targetTile.structure || targetTile.monsterType !== null) {
+          game.logs.push("Ewud can only build a wall on a clear, owned tile with no existing structure.");
+          io.to(roomId).emit("game_updated", game);
+          return;
+        }
+        targetTile.structure = StructureType.WALL;
+        targetTile.isOccupied = true;
+        hero.abilityUsed = true;
+        game.logs.push(`${player.name}'s ${hero.name} built a wooden wall on tile ${tileId}.`);
       }
 
       io.to(roomId).emit("game_updated", game);
