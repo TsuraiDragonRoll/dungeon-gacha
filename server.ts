@@ -157,8 +157,16 @@ async function startServer() {
         game.round++;
 
         // Re-sort players by tile count ascending (fewest tiles goes first as catch-up)
-        game.players.sort((a: any, b: any) => a.tilesCount - b.tilesCount);
+        game.players.sort((a: any, b: any) => (a.tilesCount - b.tilesCount) || a.id.localeCompare(b.id));
         game.currentPlayerIndex = 0;
+
+        // SOLO MODE: End game after 20 rounds
+        if (game.players.length === 1 && game.round > 20) {
+          game.status = Phase.GAME_OVER;
+          game.logs.push(`Solo run complete! Final gemstone tally: ${game.players[0].gemstones}`);
+          return;
+        }
+
         game.logs.push(`Turn order updated: ${game.players.map((p: any) => p.name).join(" → ")}`);
 
         game.board.forEach((tile: any) => {
@@ -378,7 +386,7 @@ async function startServer() {
       // Only the host can change the cap
       if (game.players[0]?.id !== socket.id) return;
 
-      const cap = Math.max(2, Math.min(4, Number(maxPlayers)));
+      const cap = Math.max(1, Math.min(4, Number(maxPlayers)));
       game.maxPlayers = cap;
 
       // Kick excess players if the new cap is lower
@@ -396,7 +404,7 @@ async function startServer() {
 
     socket.on("start_game", (roomId) => {
       const game = games.get(roomId);
-      if (game && game.players.length >= 2) {
+      if (game && game.players.length >= 1) {
         game.status = Phase.DRAFTING;
 
         // Setup starting tiles
@@ -604,9 +612,14 @@ async function startServer() {
           return;
         }
 
-        game.status = Phase.BIDDING_WAR;
-        game.logs.push("The Flagpole Bidding War has commenced!");
-        game.players.forEach(p => p.ready = false);
+        if (game.players.length === 1) {
+          game.status = Phase.GAME_OVER;
+          game.logs.push(`${game.players[0].name} built the Flagpole and finished their solo run!`);
+        } else {
+          game.status = Phase.BIDDING_WAR;
+          game.logs.push("The Flagpole Bidding War has commenced!");
+          game.players.forEach(p => p.ready = false);
+        }
         io.to(roomId).emit("game_updated", game);
         return;
       }
