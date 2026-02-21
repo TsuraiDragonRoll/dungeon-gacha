@@ -39,19 +39,17 @@ async function startServer() {
   }
 
   function createDecks() {
-    const mainDeck: any[] = [];
+    const heroDeck: any[] = [];
     HERO_CARDS.forEach(card => {
-      let count = 0;
-      if (card.rarity === Rarity.NORMAL) count = 2;
-      if (card.rarity === Rarity.EPIC) count = 2;
-      if (card.rarity === Rarity.LEGENDARY) count = 2;
+      const count = 2;
       for (let i = 0; i < count; i++) {
-        mainDeck.push({ ...card, id: `${card.id}_${i}` });
+        heroDeck.push({ ...card, id: `${card.id}_${i}` });
       }
     });
 
+    const gearDeck: any[] = [];
     GEAR_CARDS.forEach((card, i) => {
-      mainDeck.push({ ...card, id: `${card.id}_m${i}` });
+      gearDeck.push({ ...card, id: `${card.id}_m${i}` });
     });
 
     const specialDeck: any[] = [];
@@ -66,7 +64,7 @@ async function startServer() {
       bonusDeck.push({ ...card, id: `${card.id}_1` });
     });
 
-    return { mainDeck: shuffle(mainDeck), specialDeck: shuffle(specialDeck), bonusDeck: shuffle(bonusDeck) };
+    return { heroDeck: shuffle(heroDeck), gearDeck: shuffle(gearDeck), specialDeck: shuffle(specialDeck), bonusDeck: shuffle(bonusDeck) };
   }
 
   function drawCards(deck: any[], count: number, guaranteeEpic = false) {
@@ -174,6 +172,12 @@ async function startServer() {
           // Starting tiles are also always occupied.
           const isStartingTile = game.players.some((_: any, idx: number) => getStartingTiles(idx).includes(tile.id));
           tile.isOccupied = tile.structure !== null || isStartingTile || !!tile.occupiedByHeroId;
+
+          // Reset partial defense damage on opponent tiles so fortifications regenerate each round
+          if (tile.ownerId !== null && tile.monsterType === null && tile.monsterHP > 0) {
+            tile.monsterHP    = 0;
+            tile.monsterMaxHP = 0;
+          }
         });
 
         game.actionSpaces.forEach((a: any) => {
@@ -343,7 +347,8 @@ async function startServer() {
           gear: [],
           bonusCards: [],
           ready: false,
-          draftHand: [],
+          draftHeroHand: [],
+          draftGearHand: [],
           draftedCards: [],
           draftedHero: false,
           draftedGear: false,
@@ -351,6 +356,8 @@ async function startServer() {
           usedFreeSummon: false,
           summonCountThisRound: 0,
           totalSummons: 0,
+          heroesPlayedSinceRefill: 0,
+          gearPlayedSinceRefill: 0,
           color: colors[game.players.length],
           tilesCount: 3,
           earnedBonusThisAttack: false,
@@ -420,9 +427,10 @@ async function startServer() {
           });
         });
 
-        // Initialize drafting hands
+        // Initialize drafting hands (6 hero cards + 6 gear cards each)
         game.players.forEach((p: any) => {
-          p.draftHand = drawCards(game.mainDeck, 6, true);
+          p.draftHeroHand = drawCards(game.heroDeck, 6, true);
+          p.draftGearHand = drawCards(game.gearDeck, 6);
         });
 
         game.logs.push("Game started! Drafting phase begins.");
@@ -450,39 +458,55 @@ async function startServer() {
       const player = game.players.find((p: any) => p.id === socket.id);
       if (!player || player.ready) return;
 
-      const cardIndex = player.draftHand.findIndex((c: any) => c.id === cardId);
-      if (cardIndex === -1) return;
+      // Determine which hand the card comes from
+      const heroIdx = player.draftHeroHand.findIndex((c: any) => c.id === cardId);
+      const gearIdx = player.draftGearHand.findIndex((c: any) => c.id === cardId);
+      if (heroIdx === -1 && gearIdx === -1) return;
 
-      const card = player.draftHand.splice(cardIndex, 1)[0];
+      if (heroIdx !== -1) {
+        if (player.draftedHero) return; // already picked a hero this round
+        const card = player.draftHeroHand.splice(heroIdx, 1)[0];
+        player.draftedCards.push(card);
+        player.draftedHero = true;
+        game.logs.push(`${player.name} drafted ${card.name}.`);
+      } else {
+        if (player.draftedGear) return; // already picked a gear this round
+        const card = player.draftGearHand.splice(gearIdx, 1)[0];
+        player.draftedCards.push(card);
+        player.draftedGear = true;
+        game.logs.push(`${player.name} drafted ${card.name}.`);
+      }
 
-      // Always push to draftedCards — levelling only happens on summon, not on draft.
-      player.draftedCards.push(card);
-      game.logs.push(`${player.name} drafted ${card.name}.`);
-
-      // Player is ready after picking any card (enables pick-and-pass rotation)
-      player.ready = true;
+      // Player is ready only once they've picked one hero AND one gear
+      if (player.draftedHero && player.draftedGear) {
+        player.ready = true;
+      }
 
       if (game.players.every((p: any) => p.ready)) {
-        // All players finished drafting this round, rotate hands
-        const hands = game.players.map((p: any) => p.draftHand);
+        // All players finished drafting this round — rotate both hands
+        const heroHands = game.players.map((p: any) => p.draftHeroHand);
+        const gearHands = game.players.map((p: any) => p.draftGearHand);
         game.players.forEach((p: any, i: number) => {
-          p.draftHand = hands[(i + 1) % hands.length];
-          p.ready = p.draftHand.length === 0; // Ready for next round if hand is empty
+          p.draftHeroHand = heroHands[(i + 1) % heroHands.length];
+          p.draftGearHand = gearHands[(i + 1) % gearHands.length];
+          p.draftedHero = false;
+          p.draftedGear = false;
         });
 
-        if (game.players.every((p: any) => p.ready)) {
-          // All players have empty hands, drafting is complete
+        const allEmpty = game.players.every((p: any) => p.draftHeroHand.length === 0 && p.draftGearHand.length === 0);
+        if (allEmpty) {
+          // Drafting complete
           game.status = Phase.PREPARATION;
           game.currentPlayerIndex = 0;
           game.players.forEach((p: any) => {
-            p.ready = false; // Reset ready for prep phase
+            p.ready = false;
             p.gemstones += calculateIncome(p.tilesCount);
             p.finishedPrep = false;
           });
           game.logs.push("Drafting complete. Preparation phase begins.");
         } else {
-          // Not all players have empty hands, continue drafting
-          game.players.forEach(p => p.ready = false); // Reset ready for next draft pick
+          // Continue drafting — reset ready for next pick pair
+          game.players.forEach((p: any) => { p.ready = false; });
         }
       }
       io.to(roomId).emit("game_updated", game);
@@ -537,9 +561,11 @@ async function startServer() {
         card.abilityUsed = false;
         player.gear.push(card);
 
-        if (player.draftedCards.length === 0) {
-          player.draftedCards = drawCards(game.mainDeck, 6);
-          game.logs.push(`${player.name} ran out of cards and drew 6 new ones!`);
+        player.gearPlayedSinceRefill++;
+        if (player.gearPlayedSinceRefill >= 6) {
+          player.gearPlayedSinceRefill = 0;
+          player.draftedCards.push(...drawCards(game.gearDeck, 6));
+          game.logs.push(`${player.name} equipped their 6th gear — 6 new gear cards added!`);
         }
       }
 
@@ -599,9 +625,11 @@ async function startServer() {
           }
         }
 
-        if (player.draftedCards.length === 0) {
-          player.draftedCards = drawCards(game.mainDeck, 6);
-          game.logs.push(`${player.name} ran out of cards and drew 6 new ones!`);
+        player.heroesPlayedSinceRefill++;
+        if (player.heroesPlayedSinceRefill >= 6) {
+          player.heroesPlayedSinceRefill = 0;
+          player.draftedCards.push(...drawCards(game.heroDeck, 6, true));
+          game.logs.push(`${player.name} summoned their 6th hero — 6 new hero cards added!`);
         }
       }
 
@@ -859,7 +887,11 @@ async function startServer() {
         hero.abilityUsed = true;
         game.logs.push(`${player.name}'s ${hero.name} dealt ${damage} damage to the ${tile.monsterType}!`);
 
-        if (tile.monsterHP <= 0) {
+        // Opponent-owned tiles require +2 extra damage beyond killing the monster to claim
+        const isOpponentMonsterTile = tile.ownerId !== null;
+        const claimThreshold = isOpponentMonsterTile ? -2 : 0;
+
+        if (tile.monsterHP <= claimThreshold) {
           tile.monsterType = null;
           tile.monsterHP = 0;
           tile.monsterMaxHP = 0;
@@ -879,26 +911,75 @@ async function startServer() {
           }
         }
       } else if (tile.ownerId !== null) {
-        // Player-owned tile combat (mana cost)
-        let cost = 2;
-        if (tile.structure === StructureType.WALL) cost = tile.level === 1 ? 3 : 5;
-        if (tile.structure === StructureType.GATE) cost = 4;
-        if (tile.structure === StructureType.MOAT) cost = tile.level === 1 ? 4 : 6;
-
-        if (player.mana < cost) {
-          game.logs.push(`Not enough mana to capture ${tile.ownerId}'s tile!`);
-          return;
-        }
-
-        player.mana -= cost;
+        // Player-owned tile combat (hero-damage system)
         const oldOwnerId = tile.ownerId;
         const oldOwner = game.players.find((p: any) => p.id === oldOwnerId);
 
+        if (tile.structure === StructureType.GATE) {
+          // Gate: indestructible to heroes — mana-only (unchanged)
+          if (player.mana < 4) {
+            game.logs.push("The Gate requires 4 Mana to capture!");
+            return;
+          }
+          player.mana -= 4;
+          // falls through to shared capture block below
+        } else {
+          // Non-gate opponent tile: hero must attack and deplete defense HP
+          const hero = player.heroes.find((h: any) => h.id === heroId);
+          if (!hero || hero.abilityUsed) {
+            game.logs.push("Select a ready hero to attack the enemy tile!");
+            return;
+          }
+
+          // Calculate damage (mirrors the monster-combat calculation)
+          let damage = 0;
+          if (hero.id.startsWith("ash"))      damage = hero.level === 1 ? 1 : 2;
+          if (hero.id.startsWith("brog"))     damage = hero.level === 1 ? 2 : 3;
+          if (hero.id.startsWith("kael"))     damage = hero.level === 1 ? 1 : 2;
+          if (hero.id.startsWith("azul"))     damage = hero.level === 1 ? 4 : 6;
+          if (hero.id.startsWith("night"))    damage = hero.level === 1 ? 4 : 6;
+          if (hero.id.startsWith("ignis"))    damage = hero.level === 1 ? 6 : 8;
+          if (hero.id.startsWith("mordecai")) damage = hero.level === 1 ? 7 : 12;
+          if (hero.id.startsWith("hero_leg")) damage = hero.level === 1 ? 9 : 15;
+          if (hero.id.startsWith("dax"))      damage = hero.level === 1 ? 1 : 2;
+          if (damage === 0) damage = 1;
+
+          player.gear.forEach((g: any) => {
+            if (g.id === "g_sword") damage += 1;
+            if (g.id === "g_horn")  damage += 1;
+          });
+
+          // Initialise defense HP pool on first attack this round
+          if (tile.monsterHP === 0) {
+            let defense = 2; // base resistance for any opponent tile
+            if (tile.structure === StructureType.WALL) defense += tile.level === 1 ? 6 : 10;
+            if (tile.structure === StructureType.MOAT) defense += tile.level === 1 ? 8 : 12;
+            tile.monsterHP    = defense;
+            tile.monsterMaxHP = defense;
+          }
+
+          tile.monsterHP -= damage;
+          hero.abilityUsed = true;
+          game.logs.push(
+            `${player.name}'s ${hero.name} dealt ${damage} damage to ${oldOwner?.name}'s tile ${tileId}! ` +
+            `(${Math.max(0, tile.monsterHP)} defense HP remaining)`
+          );
+
+          if (tile.monsterHP > 0) {
+            // Defense not yet broken — update clients and stop
+            io.to(roomId).emit("game_updated", game);
+            return;
+          }
+          // Defense depleted — proceed to capture
+          tile.monsterHP    = 0;
+          tile.monsterMaxHP = 0;
+        }
+
+        // Shared capture block (gate-mana path or depleted-defense path)
         tile.ownerId = player.id;
         tile.structure = null;
         tile.isOccupied = true;
         tile.occupiedByHeroId = null;
-
         player.tilesCount++;
         if (oldOwner) {
           oldOwner.tilesCount--;
@@ -1063,9 +1144,11 @@ async function startServer() {
 
         player.summonCountThisRound++;
         player.totalSummons++;
-        if (player.draftedCards.length === 0) {
-          player.draftedCards = drawCards(game.heroDeck, 6);
-          game.logs.push(`${player.name} ran out of cards and drew 6 new ones!`);
+        player.heroesPlayedSinceRefill++;
+        if (player.heroesPlayedSinceRefill >= 6) {
+          player.heroesPlayedSinceRefill = 0;
+          player.draftedCards.push(...drawCards(game.heroDeck, 6, true));
+          game.logs.push(`${player.name} summoned their 6th hero — 6 new hero cards added!`);
         }
         player.bonusCards.splice(cardIdx, 1);
       }
