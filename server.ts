@@ -175,7 +175,7 @@ async function startServer() {
 
           // Reset partial defense damage on opponent tiles so fortifications regenerate each round
           if (tile.ownerId !== null && tile.monsterType === null && tile.monsterHP > 0) {
-            tile.monsterHP    = 0;
+            tile.monsterHP = 0;
             tile.monsterMaxHP = 0;
           }
         });
@@ -349,6 +349,7 @@ async function startServer() {
           ready: false,
           draftHeroHand: [],
           draftGearHand: [],
+          draftStep: "hero",  // "hero" | "gear"
           draftedCards: [],
           draftedHero: false,
           draftedGear: false,
@@ -428,10 +429,15 @@ async function startServer() {
         });
 
         // Initialize drafting hands (6 hero cards + 6 gear cards each)
+        // Hero and gear hands are separate; players pick hero first, then gear.
         game.players.forEach((p: any) => {
           p.draftHeroHand = drawCards(game.heroDeck, 6, true);
           p.draftGearHand = drawCards(game.gearDeck, 6);
+          p.draftStep = "hero"; // always start on hero page
         });
+
+        // In solo mode there is only one player, so no hand-passing needed.
+        // The single player just drafts down their own hero then gear page.
 
         game.logs.push("Game started! Drafting phase begins.");
 
@@ -453,37 +459,43 @@ async function startServer() {
 
     socket.on("draft_card", ({ roomId, cardId }) => {
       const game = games.get(roomId);
-      if (!game) return;
+      if (!game || game.status !== Phase.DRAFTING) return;
 
       const player = game.players.find((p: any) => p.id === socket.id);
-      if (!player || player.ready) return;
+      if (!player) return;
 
-      // Determine which hand the card comes from
-      const heroIdx = player.draftHeroHand.findIndex((c: any) => c.id === cardId);
-      const gearIdx = player.draftGearHand.findIndex((c: any) => c.id === cardId);
-      if (heroIdx === -1 && gearIdx === -1) return;
+      // ── Step 1: Pick a hero ──────────────────────────────────────────────────
+      if (player.draftStep === "hero") {
+        if (player.draftedHero) return; // already picked this step
+        const idx = player.draftHeroHand.findIndex((c: any) => c.id === cardId);
+        if (idx === -1) return; // card not in their hero hand
 
-      if (heroIdx !== -1) {
-        if (player.draftedHero) return; // already picked a hero this round
-        const card = player.draftHeroHand.splice(heroIdx, 1)[0];
+        const card = player.draftHeroHand.splice(idx, 1)[0];
         player.draftedCards.push(card);
         player.draftedHero = true;
-        game.logs.push(`${player.name} drafted ${card.name}.`);
-      } else {
-        if (player.draftedGear) return; // already picked a gear this round
-        const card = player.draftGearHand.splice(gearIdx, 1)[0];
+        player.draftStep = "gear"; // advance immediately — show gear page
+        game.logs.push(`${player.name} drafted hero: ${card.name}.`);
+
+        io.to(roomId).emit("game_updated", game);
+        return;
+      }
+
+      // ── Step 2: Pick a gear ──────────────────────────────────────────────────
+      if (player.draftStep === "gear") {
+        if (player.draftedGear) return;
+        const idx = player.draftGearHand.findIndex((c: any) => c.id === cardId);
+        if (idx === -1) return;
+
+        const card = player.draftGearHand.splice(idx, 1)[0];
         player.draftedCards.push(card);
         player.draftedGear = true;
-        game.logs.push(`${player.name} drafted ${card.name}.`);
+        player.ready = true; // player has now completed their full pick
+        game.logs.push(`${player.name} drafted gear: ${card.name}.`);
       }
 
-      // Player is ready only once they've picked one hero AND one gear
-      if (player.draftedHero && player.draftedGear) {
-        player.ready = true;
-      }
-
+      // ── All players done with their pick pair? ───────────────────────────────
       if (game.players.every((p: any) => p.ready)) {
-        // All players finished drafting this round — rotate both hands
+        // Rotate hands (hero hand passes left, gear hand passes left)
         const heroHands = game.players.map((p: any) => p.draftHeroHand);
         const gearHands = game.players.map((p: any) => p.draftGearHand);
         game.players.forEach((p: any, i: number) => {
@@ -491,11 +503,17 @@ async function startServer() {
           p.draftGearHand = gearHands[(i + 1) % gearHands.length];
           p.draftedHero = false;
           p.draftedGear = false;
+          p.draftStep = "hero"; // next round starts with hero pick
+          p.ready = false;
         });
 
-        const allEmpty = game.players.every((p: any) => p.draftHeroHand.length === 0 && p.draftGearHand.length === 0);
+        // Are all hands now exhausted?
+        const allEmpty = game.players.every(
+          (p: any) => p.draftHeroHand.length === 0 && p.draftGearHand.length === 0
+        );
+
         if (allEmpty) {
-          // Drafting complete
+          // Drafting complete — move to preparation
           game.status = Phase.PREPARATION;
           game.currentPlayerIndex = 0;
           game.players.forEach((p: any) => {
@@ -503,12 +521,10 @@ async function startServer() {
             p.gemstones += calculateIncome(p.tilesCount);
             p.finishedPrep = false;
           });
-          game.logs.push("Drafting complete. Preparation phase begins.");
-        } else {
-          // Continue drafting — reset ready for next pick pair
-          game.players.forEach((p: any) => { p.ready = false; });
+          game.logs.push("Drafting complete. Preparation phase begins!");
         }
       }
+
       io.to(roomId).emit("game_updated", game);
     });
 
@@ -933,20 +949,20 @@ async function startServer() {
 
           // Calculate damage (mirrors the monster-combat calculation)
           let damage = 0;
-          if (hero.id.startsWith("ash"))      damage = hero.level === 1 ? 1 : 2;
-          if (hero.id.startsWith("brog"))     damage = hero.level === 1 ? 2 : 3;
-          if (hero.id.startsWith("kael"))     damage = hero.level === 1 ? 1 : 2;
-          if (hero.id.startsWith("azul"))     damage = hero.level === 1 ? 4 : 6;
-          if (hero.id.startsWith("night"))    damage = hero.level === 1 ? 4 : 6;
-          if (hero.id.startsWith("ignis"))    damage = hero.level === 1 ? 6 : 8;
+          if (hero.id.startsWith("ash")) damage = hero.level === 1 ? 1 : 2;
+          if (hero.id.startsWith("brog")) damage = hero.level === 1 ? 2 : 3;
+          if (hero.id.startsWith("kael")) damage = hero.level === 1 ? 1 : 2;
+          if (hero.id.startsWith("azul")) damage = hero.level === 1 ? 4 : 6;
+          if (hero.id.startsWith("night")) damage = hero.level === 1 ? 4 : 6;
+          if (hero.id.startsWith("ignis")) damage = hero.level === 1 ? 6 : 8;
           if (hero.id.startsWith("mordecai")) damage = hero.level === 1 ? 7 : 12;
           if (hero.id.startsWith("hero_leg")) damage = hero.level === 1 ? 9 : 15;
-          if (hero.id.startsWith("dax"))      damage = hero.level === 1 ? 1 : 2;
+          if (hero.id.startsWith("dax")) damage = hero.level === 1 ? 1 : 2;
           if (damage === 0) damage = 1;
 
           player.gear.forEach((g: any) => {
             if (g.id === "g_sword") damage += 1;
-            if (g.id === "g_horn")  damage += 1;
+            if (g.id === "g_horn") damage += 1;
           });
 
           // Initialise defense HP pool on first attack this round
@@ -954,7 +970,7 @@ async function startServer() {
             let defense = 2; // base resistance for any opponent tile
             if (tile.structure === StructureType.WALL) defense += tile.level === 1 ? 6 : 10;
             if (tile.structure === StructureType.MOAT) defense += tile.level === 1 ? 8 : 12;
-            tile.monsterHP    = defense;
+            tile.monsterHP = defense;
             tile.monsterMaxHP = defense;
           }
 
@@ -971,7 +987,7 @@ async function startServer() {
             return;
           }
           // Defense depleted — proceed to capture
-          tile.monsterHP    = 0;
+          tile.monsterHP = 0;
           tile.monsterMaxHP = 0;
         }
 
