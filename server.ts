@@ -239,6 +239,315 @@ async function startServer() {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  AI BOT ENGINE
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const BOT_NAMES = ["Grim", "Zara", "Vex", "Nix", "Dusk", "Mora", "Kade", "Lyra"];
+  const BOT_DELAYS = { min: 900, max: 1600 };
+
+  function botDelay() {
+    return BOT_DELAYS.min + Math.random() * (BOT_DELAYS.max - BOT_DELAYS.min);
+  }
+
+  /** Called after every game_updated emit. Schedules bot turns as needed. */
+  function scheduleBot(game: any, roomId: string) {
+    if (!game) return;
+
+    // DRAFTING: bots pick simultaneously — schedule any bot that still has hands
+    if (game.status === Phase.DRAFTING) {
+      game.players.forEach((p: any) => {
+        if (!p.isBot) return;
+        if (p.ready) return; // already done
+
+        setTimeout(() => {
+          const g = games.get(roomId);
+          if (!g || g.status !== Phase.DRAFTING) return;
+          const bot = g.players.find((pl: any) => pl.id === p.id);
+          if (!bot || bot.ready) return;
+
+          // Pick hero
+          if (bot.draftStep === "hero" && bot.draftHeroHand.length > 0) {
+            const pick = bot.draftHeroHand.reduce((best: any, c: any) => {
+              const rarityScore = (r: string) => r === "EPIC" ? 3 : r === "RARE" ? 2 : 1;
+              return rarityScore(c.rarity) >= rarityScore(best.rarity) ? c : best;
+            });
+            // Simulate draft_card logic inline
+            const idx = bot.draftHeroHand.findIndex((c: any) => c.id === pick.id);
+            if (idx !== -1) {
+              const chosen = bot.draftHeroHand.splice(idx, 1)[0];
+              bot.draftedCards.push(chosen);
+              bot.draftedHero = true;
+              bot.draftStep = "gear";
+              g.logs.push(`${bot.name} [BOT] drafted hero: ${chosen.name}`);
+            }
+            io.to(roomId).emit("game_updated", g);
+            // Schedule gear pick
+            scheduleBot(g, roomId);
+          }
+          // Pick gear
+          else if (bot.draftStep === "gear" && bot.draftGearHand.length > 0) {
+            const pick = bot.draftGearHand.reduce((best: any, c: any) => {
+              const rarityScore = (r: string) => r === "EPIC" ? 3 : r === "RARE" ? 2 : 1;
+              return rarityScore(c.rarity) >= rarityScore(best.rarity) ? c : best;
+            });
+            const idx = bot.draftGearHand.findIndex((c: any) => c.id === pick.id);
+            if (idx !== -1) {
+              const chosen = bot.draftGearHand.splice(idx, 1)[0];
+              bot.draftedCards.push(chosen);
+              bot.draftedGear = true;
+              bot.ready = true;
+              g.logs.push(`${bot.name} [BOT] drafted gear: ${chosen.name}`);
+            }
+            // Rotate hands
+            const heroHands = g.players.map((p2: any) => p2.draftHeroHand);
+            const gearHands = g.players.map((p2: any) => p2.draftGearHand);
+            // Check if all ready
+            const allEmpty = g.players.every((p2: any) =>
+              p2.ready || (p2.draftHeroHand.length === 0 && p2.draftGearHand.length === 0)
+            );
+            if (allEmpty || g.players.every((p2: any) => p2.ready)) {
+              g.status = Phase.PREPARATION;
+              g.currentPlayerIndex = 0;
+              g.players.forEach((p2: any) => {
+                p2.ready = false;
+                p2.gemstones += calculateIncome(p2.tilesCount);
+                p2.finishedPrep = false;
+              });
+              g.logs.push("Drafting complete. Preparation phase begins!");
+            }
+            io.to(roomId).emit("game_updated", g);
+            scheduleBot(g, roomId);
+          }
+        }, botDelay());
+      });
+      return;
+    }
+
+    // PREP & ATTACK: schedule current player if bot
+    const current = game.players[game.currentPlayerIndex];
+    if (!current?.isBot) return;
+
+    setTimeout(() => {
+      const g = games.get(roomId);
+      if (!g) return;
+      const bot = g.players[g.currentPlayerIndex];
+      if (!bot?.isBot || bot.id !== current.id) return;
+
+      if (g.status === Phase.PREPARATION) runBotPrep(g, bot, roomId);
+      else if (g.status === Phase.ATTACK) runBotAttack(g, bot, roomId);
+    }, botDelay());
+  }
+
+  function runBotPrep(g: any, bot: any, roomId: string) {
+    if (bot.finishedPrep) { advanceTurn(g); io.to(roomId).emit("game_updated", g); scheduleBot(g, roomId); return; }
+
+    const canAfford = (cost: number) => bot.gemstones >= cost;
+    const actionAvail = (id: string) => {
+      const a = g.actionSpaces.find((a: any) => a.id === id);
+      return a && !a.used && canAfford(a.cost);
+    };
+
+    // 1. Summon a hero if possible
+    const heroCard = bot.draftedCards.find((c: any) => c.type === "HERO");
+    if (heroCard && actionAvail("p_summon")) {
+      const action = g.actionSpaces.find((a: any) => a.id === "p_summon");
+      const barracksCount = g.board.filter((t: any) => t.ownerId === bot.id && t.structure === StructureType.BARRACKS).length;
+      const maxHeroes = bot.totalSummons === 0 ? Infinity : barracksCount * 3;
+      if (bot.heroes.length < maxHeroes) {
+        bot.gemstones -= action.cost;
+        const cardIdx = bot.draftedCards.findIndex((c: any) => c.id === heroCard.id);
+        const card = bot.draftedCards.splice(cardIdx, 1)[0];
+        card.abilityUsed = false;
+        const existing = bot.heroes.find((h: any) => h.name === card.name);
+        if (existing) { existing.level = Math.min(2, existing.level + 1); }
+        else { bot.heroes.push(card); }
+        bot.totalSummons++;
+        bot.summonCountThisRound++;
+        bot.heroesPlayedSinceRefill++;
+        if (bot.heroesPlayedSinceRefill >= 6) {
+          bot.heroesPlayedSinceRefill = 0;
+          bot.draftedCards.push(...drawCards(g.heroDeck, 6, true));
+        }
+        action.used = true;
+        g.logs.push(`${bot.name} [BOT] summoned ${card.name}.`);
+        advanceTurn(g);
+        io.to(roomId).emit("game_updated", g);
+        scheduleBot(g, roomId);
+        return;
+      }
+    }
+
+    // 2. Equip a gear card if possible (need smithy after first)
+    const gearCard = bot.draftedCards.find((c: any) => c.type === "GEAR");
+    const hasSmithy = g.board.some((t: any) => t.ownerId === bot.id && t.structure === StructureType.SMITHY);
+    if (gearCard && hasSmithy && actionAvail("p_gear")) {
+      const action = g.actionSpaces.find((a: any) => a.id === "p_gear");
+      bot.gemstones -= action.cost;
+      const cardIdx = bot.draftedCards.findIndex((c: any) => c.id === gearCard.id);
+      const card = bot.draftedCards.splice(cardIdx, 1)[0];
+      card.abilityUsed = false;
+      bot.gear.push(card);
+      bot.gearPlayedSinceRefill++;
+      if (bot.gearPlayedSinceRefill >= 6) {
+        bot.gearPlayedSinceRefill = 0;
+        bot.draftedCards.push(...drawCards(g.gearDeck, 6));
+      }
+      action.used = true;
+      g.logs.push(`${bot.name} [BOT] equipped ${card.name}.`);
+      advanceTurn(g);
+      io.to(roomId).emit("game_updated", g);
+      scheduleBot(g, roomId);
+      return;
+    }
+
+    // 3. Build a wall if has 2+ wood and an eligible tile
+    if (bot.wood >= 2 && actionAvail("p_wall")) {
+      const eligibleTile = g.board.find((t: any) => t.ownerId === bot.id && !t.structure);
+      if (eligibleTile) {
+        const action = g.actionSpaces.find((a: any) => a.id === "p_wall");
+        bot.gemstones -= action.cost;
+        bot.wood -= 2;
+        eligibleTile.structure = StructureType.WALL;
+        eligibleTile.isOccupied = true;
+        action.used = true;
+        g.logs.push(`${bot.name} [BOT] built a Wall.`);
+        advanceTurn(g);
+        io.to(roomId).emit("game_updated", g);
+        scheduleBot(g, roomId);
+        return;
+      }
+    }
+
+    // 4. Buy lumber if affordable
+    if (actionAvail("p_lumber")) {
+      const action = g.actionSpaces.find((a: any) => a.id === "p_lumber");
+      bot.gemstones -= action.cost;
+      bot.wood += action.reward.wood;
+      action.reward.wood = 0;
+      action.used = true;
+      g.logs.push(`${bot.name} [BOT] purchased Lumber.`);
+      advanceTurn(g);
+      io.to(roomId).emit("game_updated", g);
+      scheduleBot(g, roomId);
+      return;
+    }
+
+    // 5. Generate mana if affordable
+    if (actionAvail("p_mana1")) {
+      const action = g.actionSpaces.find((a: any) => a.id === "p_mana1");
+      bot.gemstones -= action.cost;
+      bot.mana += 1;
+      action.used = true;
+      g.logs.push(`${bot.name} [BOT] generated Mana.`);
+      advanceTurn(g);
+      io.to(roomId).emit("game_updated", g);
+      scheduleBot(g, roomId);
+      return;
+    }
+
+    // 6. Finish prep
+    bot.finishedPrep = true;
+    g.logs.push(`${bot.name} [BOT] finished preparation.`);
+    if (g.players[g.currentPlayerIndex].id === bot.id) advanceTurn(g);
+    io.to(roomId).emit("game_updated", g);
+    scheduleBot(g, roomId);
+  }
+
+  function runBotAttack(g: any, bot: any, roomId: string) {
+    // Find all bot-owned tiles
+    const botTileIds = new Set(g.board.filter((t: any) => t.ownerId === bot.id).map((t: any) => t.id));
+
+    const isAdjToBot = (tileId: number) => {
+      const x = tileId % 9, y = Math.floor(tileId / 9);
+      const ns = [];
+      if (x > 0) ns.push(tileId - 1); if (x < 8) ns.push(tileId + 1);
+      if (y > 0) ns.push(tileId - 9); if (y < 8) ns.push(tileId + 9);
+      return ns.some(n => botTileIds.has(n));
+    };
+
+    // Ready heroes
+    const readyHeroes = bot.heroes.filter((h: any) => !h.abilityUsed);
+
+    if (readyHeroes.length > 0) {
+      // Find best adjacent monster tile (lowest HP = easiest kill)
+      const monsterTargets = g.board
+        .filter((t: any) => t.monsterType !== null && isAdjToBot(t.id))
+        .sort((a: any, b: any) => a.monsterHP - b.monsterHP);
+
+      // Find adjacent enemy tiles (owned by opponent)
+      const enemyTargets = g.board
+        .filter((t: any) => t.ownerId !== null && t.ownerId !== bot.id && isAdjToBot(t.id));
+
+      const target = monsterTargets[0] || enemyTargets[0];
+      const hero = readyHeroes[0];
+
+      if (target) {
+        // Calculate damage (matches server attack logic)
+        let damage = 1;
+        if (hero.id.startsWith("brog")) damage = hero.level === 1 ? 2 : 3;
+        if (hero.id.startsWith("azul")) damage = hero.level === 1 ? 4 : 6;
+        if (hero.id.startsWith("ignis")) damage = hero.level === 1 ? 6 : 8;
+        if (hero.id.startsWith("mordecai")) damage = hero.level === 1 ? 7 : 12;
+
+        if (target.monsterType !== null) {
+          target.monsterHP -= damage;
+          hero.abilityUsed = true;
+          g.logs.push(`${bot.name} [BOT]: ${hero.name} attacked tile ${target.id} for ${damage} dmg (HP: ${target.monsterHP}).`);
+
+          if (target.monsterHP <= 0) {
+            target.ownerId = bot.id;
+            target.monsterType = null;
+            target.monsterHP = 0;
+            target.monsterMaxHP = 0;
+            target.isOccupied = true;
+            bot.tilesCount++;
+            g.logs.push(`${bot.name} [BOT] captured tile ${target.id}!`);
+
+            // Bonus card check
+            bot.monstersDefeatedThisAttack = (bot.monstersDefeatedThisAttack || 0) + 1;
+            if (bot.monstersDefeatedThisAttack >= 3 && !bot.earnedBonusThisAttack && g.bonusDeck.length > 0) {
+              bot.earnedBonusThisAttack = true;
+              const bonus = g.bonusDeck.pop();
+              if (bonus) { bot.bonusCards.push(bonus); g.logs.push(`${bot.name} [BOT] earned bonus card: ${bonus.name}!`); }
+            }
+          }
+        } else {
+          // Enemy tile — simplified: instant capture attempt with damage resistance
+          target.monsterHP = (target.monsterHP || 0) + damage;
+          hero.abilityUsed = true;
+          const threshold = target.structure === StructureType.WALL ? 8 : target.structure === StructureType.MOAT ? 12 : 2;
+          if (target.monsterHP >= threshold) {
+            const prevOwner = g.players.find((p: any) => p.id === target.ownerId);
+            if (prevOwner) prevOwner.tilesCount--;
+            target.ownerId = bot.id;
+            target.structure = null;
+            target.monsterHP = 0;
+            target.monsterMaxHP = 0;
+            target.isOccupied = true;
+            bot.tilesCount++;
+            g.logs.push(`${bot.name} [BOT] captured enemy tile ${target.id}!`);
+          } else {
+            g.logs.push(`${bot.name} [BOT]: ${hero.name} dealt ${damage} dmg to enemy tile ${target.id} (${threshold - target.monsterHP} more needed).`);
+          }
+        }
+
+        io.to(roomId).emit("game_updated", g);
+        // Schedule another attack if more heroes are ready
+        scheduleBot(g, roomId);
+        return;
+      }
+    }
+
+    // No more moves — end turn
+    g.logs.push(`${bot.name} [BOT] ends their turn.`);
+    advanceTurn(g);
+    io.to(roomId).emit("game_updated", g);
+    scheduleBot(g, roomId);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+
   io.on("connection", (socket) => {
     socket.on("join_game", ({ roomId, playerName }) => {
       socket.join(roomId);
@@ -373,9 +682,7 @@ async function startServer() {
     socket.on("kick_player", ({ roomId, targetId }) => {
       const game = games.get(roomId);
       if (!game || game.status !== Phase.LOBBY) return;
-      // Only the host (first player in the list) can kick
       if (game.players[0]?.id !== socket.id) return;
-      // Cannot kick yourself
       if (targetId === socket.id) return;
 
       const idx = game.players.findIndex((p: any) => p.id === targetId);
@@ -383,8 +690,54 @@ async function startServer() {
 
       game.players.splice(idx, 1);
       game.logs.push(`A player was kicked from the lobby.`);
-      // Notify the kicked player individually so they can show an alert
       io.to(targetId).emit("kicked_from_lobby");
+      io.to(roomId).emit("game_updated", game);
+    });
+
+    socket.on("add_ai_player", ({ roomId }) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.LOBBY) return;
+      if (game.players[0]?.id !== socket.id) return;
+      if (game.players.length >= game.maxPlayers) return;
+
+      const colors = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b"];
+      const usedBotNames = game.players.filter((p: any) => p.isBot).map((p: any) => p.name);
+      const botName = BOT_NAMES.find(n => !usedBotNames.includes(n)) || "Bot";
+      const botId = `bot_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+      game.players.push({
+        id: botId,
+        ip: "bot",
+        name: botName,
+        isBot: true,
+        gemstones: 6,
+        mana: 0,
+        wood: 0,
+        clay: 0,
+        stone: 0,
+        heroes: [],
+        gear: [],
+        bonusCards: [],
+        ready: false,
+        draftHeroHand: [],
+        draftGearHand: [],
+        draftStep: "hero",
+        draftedCards: [],
+        draftedHero: false,
+        draftedGear: false,
+        finishedPrep: false,
+        usedFreeSummon: false,
+        summonCountThisRound: 0,
+        totalSummons: 0,
+        heroesPlayedSinceRefill: 0,
+        gearPlayedSinceRefill: 0,
+        color: colors[game.players.length % colors.length],
+        tilesCount: 3,
+        earnedBonusThisAttack: false,
+        monstersDefeatedThisAttack: 0,
+        enemyCapturesThisAttack: 0,
+      });
+      game.logs.push(`AI opponent "${botName}" joined the lobby.`);
       io.to(roomId).emit("game_updated", game);
     });
 
@@ -454,6 +807,7 @@ async function startServer() {
         }
 
         io.to(roomId).emit("game_updated", game);
+        scheduleBot(game, roomId); // kick off bot drafting
       }
     });
 
@@ -684,35 +1038,146 @@ async function startServer() {
       if (action.id === "s_stone") action.reward.stone = 0;
 
       if (action.reward.structure) {
-        const tile = game.board[tileId];
-        if (tile && tile.ownerId === player.id && !tile.structure) {
-          // If occupied by a hero, free the hero
-          if (tile.occupiedByHeroId) {
-            const hero = player.heroes.find((h: any) => h.id === tile.occupiedByHeroId);
-            if (hero) {
-              hero.abilityUsed = false;
-              game.logs.push(`${hero.name} is no longer needed to occupy tile ${tileId} as a structure was built.`);
-            }
-            tile.occupiedByHeroId = null;
-          }
-          tile.structure = action.reward.structure;
-          tile.isOccupied = true;
-          if (actionId === "p_wall" || actionId === "s_up_wall") player.wood -= 2;
-          if (actionId === "p_barracks") { player.wood -= 6; player.clay -= 2; }
-          if (actionId === "p_smithy") { player.clay -= 1; player.stone -= 2; }
-        } else {
-          player.gemstones += action.cost; // Refund
+        const tile = tileId !== undefined ? game.board[tileId] : undefined;
+
+        if (!tile) {
+          game.logs.push(`${player.name}: click a tile on the board to place the structure!`);
+          player.gemstones += finalCost; // full refund
           return;
         }
+
+        if (tile.ownerId !== player.id) {
+          game.logs.push(`${player.name}: you can only build on tiles you own!`);
+          player.gemstones += finalCost;
+          return;
+        }
+
+        // Upgrade actions need an existing structure; plain builds need empty tiles
+        const isUpgrade = actionId === "s_up_wall" || actionId === "s_up_moat";
+        if (isUpgrade) {
+          const requiredBase = actionId === "s_up_wall" ? StructureType.WALL : StructureType.MOAT;
+          if (tile.structure !== requiredBase) {
+            game.logs.push(`${player.name}: that tile doesn't have the structure to upgrade!`);
+            player.gemstones += finalCost;
+            return;
+          }
+        } else if (tile.structure) {
+          game.logs.push(`${player.name}: that tile already has a structure (${tile.structure})!`);
+          player.gemstones += finalCost;
+          return;
+        }
+
+        // If occupied by a hero, evict them
+        if (tile.occupiedByHeroId) {
+          const hero = player.heroes.find((h: any) => h.id === tile.occupiedByHeroId);
+          if (hero) {
+            hero.abilityUsed = false;
+            game.logs.push(`${hero.name} was freed from tile ${tileId} as a structure was built.`);
+          }
+          tile.occupiedByHeroId = null;
+        }
+
+        tile.structure = action.reward.structure;
+        tile.isOccupied = true;
+
+        if (actionId === "p_wall" || actionId === "s_up_wall") player.wood -= 2;
+        if (actionId === "p_barracks") { player.wood -= 6; player.clay -= 2; }
+        if (actionId === "p_smithy") { player.clay -= 1; player.stone -= 2; }
       }
 
       action.used = true;
       game.logs.push(`${player.name} performed: ${action.label}`);
 
       advanceTurn(game);
-
       io.to(roomId).emit("game_updated", game);
+      scheduleBot(game, roomId);
     });
+
+    // ── BUILD WALLS (multi-tile) ──────────────────────────────────────────────
+    socket.on("build_walls", ({ roomId, actionId, tileIds }: { roomId: string, actionId: string, tileIds: number[] }) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.PREPARATION) return;
+
+      const player = game.players[game.currentPlayerIndex];
+      if (player.id !== socket.id) return;
+
+      const action = game.actionSpaces.find((a: any) => a.id === actionId);
+      if (!action || action.used || !action.reward?.structure) return;
+
+      const ids: number[] = [...new Set<number>(tileIds)]; // deduplicate
+      if (ids.length === 0) return;
+
+      const woodNeeded = ids.length * 2;
+      if (player.wood < woodNeeded) {
+        game.logs.push(`${player.name}: not enough Wood — need ${woodNeeded}, have ${player.wood}.`);
+        io.to(roomId).emit("game_updated", game);
+        return;
+      }
+
+      // Validate every selected tile
+      for (const id of ids) {
+        const t = game.board[id];
+        if (!t) { game.logs.push(`${player.name}: tile ${id} doesn't exist.`); io.to(roomId).emit("game_updated", game); return; }
+        if (t.ownerId !== player.id) { game.logs.push(`${player.name}: you don't own tile ${id}.`); io.to(roomId).emit("game_updated", game); return; }
+        if (t.structure) { game.logs.push(`${player.name}: tile ${id} already has a structure (${t.structure}).`); io.to(roomId).emit("game_updated", game); return; }
+      }
+
+      // ── Connectivity check (BFS) ─────────────────────────────────────────
+      const isAdjacent = (a: number, b: number): boolean => {
+        const rowA = Math.floor(a / 9), colA = a % 9;
+        const rowB = Math.floor(b / 9), colB = b % 9;
+        return (rowA === rowB && Math.abs(colA - colB) === 1) ||
+          (colA === colB && Math.abs(rowA - rowB) === 1);
+      };
+
+      if (ids.length > 1) {
+        // Anchor nodes = selected tiles + existing player-owned walls
+        const existingWallIds: number[] = (game.board as any[])
+          .filter(t => t.ownerId === player.id && t.structure === StructureType.WALL)
+          .map(t => t.id);
+        const allNodes = new Set<number>([...ids, ...existingWallIds]);
+
+        const visited = new Set<number>([ids[0]]);
+        const queue = [ids[0]];
+        while (queue.length > 0) {
+          const cur = queue.shift()!;
+          for (const node of allNodes) {
+            if (!visited.has(node) && isAdjacent(cur, node)) {
+              visited.add(node);
+              queue.push(node);
+            }
+          }
+        }
+        for (const id of ids) {
+          if (!visited.has(id)) {
+            game.logs.push(`${player.name}: walls must be connected — tile ${id} is isolated. Try adding a connecting tile.`);
+            io.to(roomId).emit("game_updated", game);
+            return;
+          }
+        }
+      }
+
+      // ── Place all walls ──────────────────────────────────────────────────
+      for (const id of ids) {
+        const t = game.board[id];
+        if (t.occupiedByHeroId) {
+          const hero = player.heroes.find((h: any) => h.id === t.occupiedByHeroId);
+          if (hero) hero.abilityUsed = false;
+          t.occupiedByHeroId = null;
+        }
+        t.structure = StructureType.WALL;
+        t.isOccupied = true;
+      }
+
+      player.wood -= woodNeeded;
+      action.used = true;
+      game.logs.push(`${player.name} built ${ids.length} Wall${ids.length > 1 ? "s" : ""} — paid ${woodNeeded} Wood.`);
+
+      advanceTurn(game);
+      io.to(roomId).emit("game_updated", game);
+      scheduleBot(game, roomId);
+    });
+
 
     socket.on("finish_prep", (roomId) => {
       const game = games.get(roomId);
@@ -735,6 +1200,7 @@ async function startServer() {
       }
 
       io.to(roomId).emit("game_updated", game);
+      scheduleBot(game, roomId);
     });
 
     socket.on("undo_finish_prep", (roomId) => {
@@ -1014,6 +1480,7 @@ async function startServer() {
       }
 
       io.to(roomId).emit("game_updated", game);
+      scheduleBot(game, roomId);
     });
 
     socket.on("trade_resources", ({ roomId, from, to }) => {
@@ -1294,6 +1761,7 @@ async function startServer() {
 
       advanceTurn(game);
       io.to(roomId).emit("game_updated", game);
+      scheduleBot(game, roomId);
     });
   });
 
