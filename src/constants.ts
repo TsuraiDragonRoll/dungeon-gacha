@@ -30,7 +30,7 @@ export const HERO_CARDS: Partial<Card>[] = [
   { id: "alcie", name: "Alcie", type: "HERO", rarity: Rarity.EPIC, level: 1, ability: "Turn any 1 resource into 3 different resources.", phase: "P", description: "Human Alchemist" },
 
   // Legendary Hero
-  { id: "hero_leg", name: "Hero", type: "HERO", rarity: Rarity.LEGENDARY, level: 1, ability: "Deal up to 9 damage, split between 2 perpendicular monsters.", phase: "A", description: "Hero of the dungeon" },
+  { id: "hero_leg", name: "Hero", type: "HERO", rarity: Rarity.LEGENDARY, level: 1, ability: "Deal 5 damage each to 2 adjacent monsters.", phase: "A", description: "Hero of the dungeon" },
 ];
 
 export const SPECIAL_HEROES: Partial<Card>[] = [

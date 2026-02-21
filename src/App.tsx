@@ -59,6 +59,9 @@ export default function App() {
   const [mobileTab, setMobileTab] = useState<"board" | "stats" | "actions">("board");
   const [pendingWallTiles, setPendingWallTiles] = useState<number[]>([]);
   const [mySocketId, setMySocketId] = useState<string>(socket.id ?? "");
+  // Dual-target state for Hero of the Dungeon (hero_leg)
+  const [dualTargets, setDualTargets] = useState<number[]>([]);
+  const [dualHeroId, setDualHeroId] = useState<string | null>(null);
 
   useEffect(() => {
     // Capture socket ID as soon as it is available (may already be set on mount)
@@ -89,6 +92,44 @@ export default function App() {
       socket.off("kicked_from_lobby");
     };
   }, []);
+
+  const prevTurnRef = useRef(false);
+
+  useEffect(() => {
+    if (!gameState) return;
+    const isMyTurnNow = gameState.players[gameState.currentPlayerIndex]?.id === mySocketId;
+
+    // Play a ding when transitioning to the player's turn (skip during simultaneous drafting)
+    if (isMyTurnNow && !prevTurnRef.current && gameState.status !== Phase.DRAFTING && gameState.status !== Phase.GAME_OVER) {
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          const ctx = new AudioContextClass();
+          const osc = ctx.createOscillator();
+          const gainNode = ctx.createGain();
+
+          osc.connect(gainNode);
+          gainNode.connect(ctx.destination);
+
+          // Pleasant high-pitch ding (sine wave frequency ramp)
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(800, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.1);
+
+          // Fast attack, slow exponential decay
+          gainNode.gain.setValueAtTime(0, ctx.currentTime);
+          gainNode.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+          gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+
+          osc.start();
+          osc.stop(ctx.currentTime + 0.5);
+        }
+      } catch (e) {
+        console.error("Failed to play turn notification ping:", e);
+      }
+    }
+    prevTurnRef.current = isMyTurnNow;
+  }, [gameState, mySocketId]);
 
   const handleJoin = () => {
     if (roomId && playerName) {
@@ -149,8 +190,28 @@ export default function App() {
     socket.emit("submit_bid", { roomId });
   };
 
+  const isHeroDualCard = (cardId: string) => cardId.startsWith("hero_leg");
+
+  const handleDualConfirm = () => {
+    if (!dualHeroId || dualTargets.length < 2) return;
+    socket.emit("attack_dual_tile", { roomId, tileId1: dualTargets[0], tileId2: dualTargets[1], heroId: dualHeroId });
+    setDualTargets([]);
+    setDualHeroId(null);
+  };
+
   const handleTileClick = (tileId: number) => {
     if (gameState.status === Phase.ATTACK) {
+      // Dual-target mode for hero_leg
+      if (dualHeroId) {
+        const tile = gameState.board[tileId];
+        if (tile.monsterType === null) return; // must be a monster tile
+        setDualTargets(prev => {
+          if (prev.includes(tileId)) return prev.filter(t => t !== tileId); // deselect
+          if (prev.length >= 2) return [prev[1], tileId]; // replace oldest
+          return [...prev, tileId];
+        });
+        return;
+      }
       if (selectedCard) {
         socket.emit("attack_tile", { roomId, tileId, heroId: selectedCard });
         setSelectedCard(null);
@@ -168,6 +229,9 @@ export default function App() {
         socket.emit("prep_action", { roomId, actionId: selectedAction, tileId });
         setSelectedAction(null);
       }
+    } else if (gameState.status === Phase.PREPARATION && selectedCard && selectedCard.startsWith("ewud")) {
+      socket.emit("use_hero_ability", { roomId, heroId: selectedCard, tileId });
+      setSelectedCard(null);
     } else {
       setSelectedTile(tileId);
     }
@@ -188,6 +252,22 @@ export default function App() {
       setSelectedCard(null);
       return;
     }
+    // Enter dual-target mode for Hero of the Dungeon
+    if (isHeroDualCard(cardId)) {
+      if (dualHeroId === cardId) {
+        // Toggle off
+        setDualHeroId(null);
+        setDualTargets([]);
+      } else {
+        setDualHeroId(cardId);
+        setDualTargets([]);
+        setSelectedCard(null);
+      }
+      return;
+    }
+    // Clear dual mode when switching to another card
+    setDualHeroId(null);
+    setDualTargets([]);
     // Toggle off or select
     if (selectedCard === cardId) {
       setSelectedCard(null);
@@ -585,6 +665,7 @@ export default function App() {
                     onClick={() => handleTileClick(i)}
                     isSelected={selectedTile === i}
                     isPendingWall={pendingWallTiles.includes(i)}
+                    isPendingDual={dualTargets.includes(i)}
                   />
                 ))}
               </div>
@@ -790,8 +871,8 @@ export default function App() {
                     <CardView
                       card={item}
                       onSelect={() => handleActiveCardClick(item.id)}
-                      active={selectedCard === item.id}
-                      disabled={gameState.status === Phase.ATTACK && !!item.abilityUsed}
+                      active={selectedCard === item.id || dualHeroId === item.id}
+                      disabled={!!item.abilityUsed}
                       spent={!!item.abilityUsed}
                     />
                   </div>
@@ -801,6 +882,60 @@ export default function App() {
                     <p className="text-[10px] text-white/10 italic">Your army is empty. Summon heroes to begin.</p>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Dual-Attack Banner (desktop) */}
+          {gameState.status === Phase.ATTACK && isMyTurn && dualHeroId && (
+            <div className="flex-1 min-w-[280px] flex flex-col gap-3 border-l border-white/5 pl-4">
+              <div className="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">⚔️</span>
+                  <p className="text-[10px] text-yellow-400 font-bold uppercase tracking-wider">
+                    Hero of the Dungeon — Dual Strike
+                  </p>
+                  <button
+                    onClick={() => { setDualHeroId(null); setDualTargets([]); }}
+                    className="ml-auto text-white/30 hover:text-white/60 text-[9px] uppercase font-bold shrink-0"
+                  >Cancel</button>
+                </div>
+                <p className="text-[10px] text-white/50 mb-3">
+                  Click <span className="text-yellow-400 font-bold">2 adjacent monster tiles</span> on the board, then confirm.
+                  {dualTargets.length > 0 && (
+                    <span className="block mt-1 text-yellow-300 font-bold">
+                      {dualTargets.length}/2 targets selected
+                    </span>
+                  )}
+                </p>
+                <button
+                  onClick={handleDualConfirm}
+                  disabled={dualTargets.length < 2}
+                  className="w-full py-2 bg-yellow-600/30 hover:bg-yellow-600/50 disabled:opacity-30 disabled:cursor-not-allowed text-yellow-300 border border-yellow-500/40 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all"
+                >
+                  ⚔️ Confirm Dual Strike (5 DMG each)
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Ewud Build Banner (desktop) */}
+          {gameState.status === Phase.PREPARATION && isMyTurn && selectedCard && selectedCard.startsWith("ewud") && (
+            <div className="flex-1 min-w-[280px] flex flex-col gap-3 border-l border-white/5 pl-4">
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">🌿</span>
+                  <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">
+                    Ewud — Nature's Growth
+                  </p>
+                  <button
+                    onClick={() => setSelectedCard(null)}
+                    className="ml-auto text-white/30 hover:text-white/60 text-[9px] uppercase font-bold shrink-0"
+                  >Cancel</button>
+                </div>
+                <p className="text-[10px] text-white/50">
+                  Click a clear tile you own on the board to build a <strong className="text-amber-400">Wooden Wall</strong> for free.
+                </p>
               </div>
             </div>
           )}
@@ -956,8 +1091,8 @@ export default function App() {
                   {[...(me?.heroes || []), ...(me?.gear || [])].map(item => (
                     <div key={item.id} className="w-28 shrink-0">
                       <CardView card={item} onSelect={() => handleActiveCardClick(item.id)}
-                        active={selectedCard === item.id}
-                        disabled={gameState.status === Phase.ATTACK && !!item.abilityUsed}
+                        active={selectedCard === item.id || dualHeroId === item.id}
+                        disabled={!!item.abilityUsed}
                         spent={!!item.abilityUsed} />
                     </div>
                   ))}
@@ -965,6 +1100,54 @@ export default function App() {
                     <p className="text-[10px] text-white/20 italic">No heroes or gear yet.</p>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* Dual-Attack Banner (mobile) */}
+            {gameState.status === Phase.ATTACK && isMyTurn && dualHeroId && (
+              <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-base">⚔️</span>
+                  <p className="text-[10px] text-yellow-400 font-bold uppercase tracking-wider flex-1">
+                    Hero — Dual Strike
+                  </p>
+                  <button
+                    onClick={() => { setDualHeroId(null); setDualTargets([]); }}
+                    className="text-white/30 hover:text-white/60 text-[9px] uppercase font-bold"
+                  >Cancel</button>
+                </div>
+                <p className="text-[10px] text-white/50 mb-2">
+                  Select <span className="text-yellow-400 font-bold">2 adjacent monster tiles</span> on the board.
+                  {dualTargets.length > 0 && (
+                    <span className="ml-1 text-yellow-300 font-bold">{dualTargets.length}/2 selected</span>
+                  )}
+                </p>
+                <button
+                  onClick={handleDualConfirm}
+                  disabled={dualTargets.length < 2}
+                  className="w-full py-2 bg-yellow-600/30 hover:bg-yellow-600/50 disabled:opacity-30 disabled:cursor-not-allowed text-yellow-300 border border-yellow-500/40 rounded-lg text-[10px] font-bold uppercase tracking-widest"
+                >
+                  ⚔️ Confirm (5 DMG each)
+                </button>
+              </div>
+            )}
+
+            {/* Ewud Build Banner (mobile) */}
+            {gameState.status === Phase.PREPARATION && isMyTurn && selectedCard && selectedCard.startsWith("ewud") && (
+              <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-base">🌿</span>
+                  <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider flex-1">
+                    Ewud — Nature's Growth
+                  </p>
+                  <button
+                    onClick={() => setSelectedCard(null)}
+                    className="text-white/30 hover:text-white/60 text-[9px] uppercase font-bold"
+                  >Cancel</button>
+                </div>
+                <p className="text-[10px] text-white/50">
+                  Select a clear tile you own on the board to build a Wooden Wall for free.
+                </p>
               </div>
             )}
 
@@ -1667,8 +1850,8 @@ function StatCard({ icon, label, value }: { icon: React.ReactNode, label: string
   );
 }
 
-function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSelected: boolean, isPendingWall?: boolean, key?: any }) {
-  const { tile, players, onClick, isSelected, isPendingWall } = props;
+function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSelected: boolean, isPendingWall?: boolean, isPendingDual?: boolean, key?: any }) {
+  const { tile, players, onClick, isSelected, isPendingWall, isPendingDual } = props;
   const owner = players.find(p => p.id === tile.ownerId);
   const [hovered, setHovered] = React.useState(false);
   const tileRef = React.useRef<HTMLButtonElement>(null);
@@ -1723,6 +1906,7 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
           owner ? "shadow-inner" : "bg-[#1a1c21] hover:bg-white/10",
           isSelected && "ring-2 ring-emerald-500 ring-offset-2 ring-offset-black",
           isPendingWall && "ring-2 ring-amber-400 ring-offset-1 ring-offset-black brightness-125",
+          isPendingDual && "ring-2 ring-yellow-400 ring-offset-1 ring-offset-black brightness-150",
           tile.id === 40 && "border-2 border-dashed border-yellow-500/50"
         )}
         style={{ backgroundColor: owner ? `${owner.color}44` : undefined, borderColor: owner ? owner.color : 'rgba(255,255,255,0.1)', borderWidth: owner ? '1px' : '0px' }}
