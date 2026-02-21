@@ -326,15 +326,16 @@ export default function App() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/30">Dungeon Masters</h3>
-          {gameState.players.map((p, i) => (
-            <PlayerRow
-              key={p.id}
-              player={p}
-              isActive={i === gameState.currentPlayerIndex}
-              isSelf={p.id === mySocketId}
-            />
-          ))}
+          <motion.div layout className="space-y-4">
+            {gameState.players.map((p, i) => (
+              <PlayerRow
+                key={p.id}
+                player={p}
+                isActive={i === gameState.currentPlayerIndex}
+                isSelf={p.id === mySocketId}
+              />
+            ))}
+          </motion.div>
         </div>
 
         <div className="p-6 bg-black/40 border-t border-white/5 h-48 overflow-y-auto">
@@ -357,9 +358,11 @@ export default function App() {
               <div className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[10px] font-bold uppercase tracking-widest">
                 {gameState.status}
               </div>
-              <span className="text-sm text-white/40">
-                {isMyTurn ? "Your Turn - Make your move" : `${gameState.players[gameState.currentPlayerIndex]?.name}'s Turn`}
-              </span>
+              {gameState.status !== Phase.DRAFTING && (
+                <span className="text-sm text-white/40">
+                  {isMyTurn ? "Your Turn - Make your move" : `${gameState.players[gameState.currentPlayerIndex]?.name}'s Turn`}
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-3">
@@ -381,8 +384,8 @@ export default function App() {
             </div>
           </div>
 
-          {/* Row 2: turn order strip */}
-          <div className="h-10 px-8 flex items-center gap-1 border-t border-white/5">
+          {/* Row 2: turn order strip (hidden during draft — everyone picks simultaneously) */}
+          {gameState.status !== Phase.DRAFTING && <div className="h-10 px-8 flex items-center gap-1 border-t border-white/5">
             <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/20 mr-2 shrink-0">Turn Order</span>
             <div className="flex items-center gap-1 overflow-x-auto">
               {gameState.players.map((p, i) => {
@@ -427,7 +430,7 @@ export default function App() {
                 );
               })}
             </div>
-          </div>
+          </div>}
         </div>
 
         <div className="flex-1 flex items-center justify-center p-8 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#1a1c21] to-[#0a0502]">
@@ -481,33 +484,59 @@ export default function App() {
               onStart={handleStart}
             />
           ) : gameState.status === Phase.DRAFTING ? (
-            <div className="w-full max-w-4xl">
+            <div className="w-full max-w-5xl overflow-y-auto">
               <h2 className="text-center text-xl font-bold mb-2 uppercase tracking-widest">Draft your Arsenal</h2>
-              <div className="flex justify-center gap-4 mb-8">
+              <p className="text-center text-white/40 text-xs mb-6">Pick 1 hero and 1 gear, then hands pass to the next player.</p>
+
+              {/* Hero hand */}
+              <div className="mb-6">
                 <div className={cn(
-                  "px-4 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest border transition-all",
-                  me?.draftedHero ? "bg-emerald-500/20 border-emerald-500 text-emerald-500" : "bg-white/5 border-white/10 text-white/30"
+                  "flex items-center gap-2 mb-3",
                 )}>
-                  Hero {me?.draftedHero ? "✓" : "Needed"}
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-white/30">Heroes</span>
+                  <span className={cn(
+                    "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest border transition-all",
+                    me?.draftedHero ? "bg-emerald-500/20 border-emerald-500 text-emerald-500" : "bg-white/5 border-white/10 text-white/30"
+                  )}>
+                    {me?.draftedHero ? "✓ Picked" : "Pick 1"}
+                  </span>
                 </div>
-                <div className={cn(
-                  "px-4 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest border transition-all",
-                  me?.draftedGear ? "bg-blue-500/20 border-blue-500 text-blue-500" : "bg-white/5 border-white/10 text-white/30"
-                )}>
-                  Gear {me?.draftedGear ? "✓" : "Needed"}
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                  {me?.draftHeroHand.map(card => (
+                    <CardView
+                      key={card.id}
+                      card={card}
+                      onSelect={() => handleDraft(card.id)}
+                      disabled={me.ready || !!me.draftedHero}
+                    />
+                  ))}
                 </div>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                {me?.draftHand.map(card => (
-                  <CardView
-                    key={card.id}
-                    card={card}
-                    onSelect={() => handleDraft(card.id)}
-                    disabled={me.ready || (card.type === "HERO" && me.draftedHero) || (card.type === "GEAR" && me.draftedGear)}
-                  />
-                ))}
+
+              {/* Gear hand */}
+              <div className="mb-6">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-white/30">Gear</span>
+                  <span className={cn(
+                    "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest border transition-all",
+                    me?.draftedGear ? "bg-blue-500/20 border-blue-500 text-blue-500" : "bg-white/5 border-white/10 text-white/30"
+                  )}>
+                    {me?.draftedGear ? "✓ Picked" : "Pick 1"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                  {me?.draftGearHand.map(card => (
+                    <CardView
+                      key={card.id}
+                      card={card}
+                      onSelect={() => handleDraft(card.id)}
+                      disabled={me.ready || !!me.draftedGear}
+                    />
+                  ))}
+                </div>
               </div>
-              {me?.ready && <p className="text-center mt-8 text-emerald-500 animate-pulse">Waiting for other players...</p>}
+
+              {me?.ready && <p className="text-center mt-4 text-emerald-500 animate-pulse">Waiting for other players...</p>}
             </div>
           ) : (
             <div className="relative group">
@@ -816,7 +845,7 @@ function DraftedHandOverlay({ cards, onSelect, onClose, selectedAction }: { card
   );
 }
 
-function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolean; isSelf: boolean }) {
+function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolean; isSelf: boolean; key?: any }) {
   const [hovered, setHovered] = React.useState(false);
   const rowRef = React.useRef<HTMLDivElement>(null);
   const [tooltipPos, setTooltipPos] = React.useState({ top: 0, left: 0 });
@@ -838,8 +867,9 @@ function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolea
   ];
 
   return (
-    <div
+    <motion.div
       ref={rowRef}
+      layout
       className="relative"
       onMouseEnter={handleMouseEnter}
       onMouseMove={handleMouseMove}
@@ -950,7 +980,7 @@ function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolea
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </motion.div>
   );
 }
 
@@ -963,7 +993,7 @@ function LobbyScreen({ gameState, myId, roomId, onStart }: {
   const isHost = gameState.players[0]?.id === myId;
   const maxPlayers: number = (gameState as any).maxPlayers ?? 4;
   const filledSlots = gameState.players.length;
-  const canStart = isHost && filledSlots >= 2;
+  const canStart = isHost && filledSlots >= 1;
 
   const handleKick = (targetId: string) => {
     socket.emit("kick_player", { roomId, targetId });
@@ -1119,9 +1149,10 @@ function GameOverScreen({ gameState, myId, roomId, playerName }: {
   playerName: string;
 }) {
   const [rematching, setRematching] = React.useState(false);
+  const isSolo = gameState.players.length === 1;
   const sorted = [...gameState.players].sort((a, b) => b.gemstones - a.gemstones);
   const winner = sorted[0];
-  const didWin = winner?.id === myId;
+  const didWin = isSolo || (winner?.id === myId);
   const medals = ["🥇", "🥈", "🥉", "🏅"];
 
   const handleRematch = () => {
@@ -1213,7 +1244,7 @@ function GameOverScreen({ gameState, myId, roomId, playerName }: {
               className="text-4xl font-black uppercase tracking-widest mb-1"
               style={{ color: didWin ? "#fbbf24" : "#f87171" }}
             >
-              {didWin ? "Victory!" : "Defeated"}
+              {isSolo ? "Challenge End" : (didWin ? "Victory!" : "Defeated")}
             </motion.h1>
 
             <motion.p
@@ -1223,9 +1254,11 @@ function GameOverScreen({ gameState, myId, roomId, playerName }: {
               className="text-sm font-medium"
               style={{ color: didWin ? "#fef3c7bb" : "#fecacabb" }}
             >
-              {didWin
-                ? `${winner.name} planted the Flagpole and claimed the dungeon!`
-                : `${winner.name} claimed victory. Better luck next time.`}
+              {isSolo
+                ? `You finished the run with ${winner.gemstones} gemstones. Can you settle for more next time?`
+                : (didWin
+                  ? `${winner.name} planted the Flagpole and claimed the dungeon!`
+                  : `${winner.name} claimed victory. Better luck next time.`)}
             </motion.p>
           </div>
 
@@ -1422,6 +1455,19 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
               style={{ backgroundColor: monsterColor }}
             >
               {tile.monsterHP}
+            </div>
+          </div>
+        )}
+
+        {/* Fortification defense HP (opponent tile being chipped away, no monster) */}
+        {!tile.monsterType && tile.monsterMaxHP > 0 && tile.ownerId && (
+          <div className="relative w-6 h-6 md:w-8 md:h-8 flex items-center justify-center">
+            <div className="absolute inset-0 bg-white rounded-full scale-110" />
+            <div
+              className="w-full h-full rounded-full flex items-center justify-center text-[8px] md:text-[10px] font-bold text-white shadow-lg"
+              style={{ backgroundColor: "#6366f1" }}
+            >
+              🛡{tile.monsterHP}
             </div>
           </div>
         )}
@@ -1747,8 +1793,8 @@ function Rulebook({ onClose }: { onClose: () => void }) {
 
             <RuleSection title="🏗 Structures">
               <RuleRow label="Gate 🏰">Your starting structure. Indestructible. Costs attacker +4 Mana to capture.</RuleRow>
-              <RuleRow label="Wall 🧱">Costs attacker +3 Mana (Stone Wall upgrade: +5 Mana).</RuleRow>
-              <RuleRow label="Moat 🌊">Costs attacker +4 Mana (upgraded: +6 Mana).</RuleRow>
+              <RuleRow label="Wall 🧱">Costs attacker +6 damage to breach (Stone Wall upgrade: +10 damage). All enemy tiles also have a base 2 damage resistance.</RuleRow>
+              <RuleRow label="Moat 🌊">Costs attacker +8 damage to breach (upgraded: +12 damage). All enemy tiles also have a base 2 damage resistance.</RuleRow>
               <RuleRow label="Barracks 🛡">Each holds 3 heroes. You must have free Barracks capacity before summoning a 2nd+ hero (first summon ever is free).</RuleRow>
               <RuleRow label="Smithy 🔨">Required to use the Create Gear action.</RuleRow>
               <RuleRow label="Flagpole 🚩">Placed at the board centre by the triggering player. Initiates the Bidding War.</RuleRow>
@@ -1788,7 +1834,7 @@ function Rulebook({ onClose }: { onClose: () => void }) {
             <RuleSection title="🗡 Combat">
               <RuleRow label="Monster attacks">Select a monster tile → click a Ready hero → hero deals damage. If HP hits 0 you claim the tile (+3 Gems).</RuleRow>
               <RuleRow label="Mana attacks">Select a monster tile → set Mana amount → click Attack. Each Mana = 2 damage.</RuleRow>
-              <RuleRow label="Enemy tiles">Click an adjacent enemy tile (your turn). Costs 2 Mana base (+more for Walls/Moats/Gates). You claim the tile (+5 Gems from the old owner).</RuleRow>
+              <RuleRow label="Enemy tiles">Select a ready hero, then click an adjacent enemy tile. Base 2 defense HP (+6/+10 for Wall, +8/+12 for Moat). Deplete the defense HP to claim it (+5 Gems from the old owner). Gates still require 4 Mana.</RuleRow>
               <RuleRow label="Adjacency rule">You can only target tiles immediately next to (orthogonally adjacent to) tiles you already control.</RuleRow>
               <RuleRow label="Monster HP">Goblin 2 · Orc 5 · Giant 8 · Dragon 14 · Demon King 22. Stronger monsters ring the centre.</RuleRow>
               <RuleRow label="Reclamation">At round end, unoccupied, structureless non-starting tiles revert to random monsters.</RuleRow>

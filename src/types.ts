@@ -71,7 +71,8 @@ export interface Player {
   gear: Card[];
   bonusCards: Card[];
   ready: boolean;
-  draftHand: Card[];
+  draftHeroHand: Card[];
+  draftGearHand: Card[];
   draftedCards: Card[];
   draftedHero: boolean;
   draftedGear: boolean;
@@ -79,6 +80,8 @@ export interface Player {
   usedFreeSummon: boolean;
   summonCountThisRound: number;
   totalSummons: number;
+  heroesPlayedSinceRefill: number;     // Resets to 0 after every 6 hero plays (triggers refill)
+  gearPlayedSinceRefill: number;       // Resets to 0 after every 6 gear plays (triggers refill)
   color: string;
   tilesCount: number;
   bidAmount?: number;
