@@ -1019,6 +1019,8 @@ export default function App() {
           />
         )}
       </AnimatePresence>
+
+      {showRulebook && <Rulebook onClose={() => setShowRulebook(false)} />}
     </div>
   );
 }
@@ -1153,7 +1155,7 @@ function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolea
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color }} />
             <span className="text-sm font-medium">
-              {player.name} {isSelf && "(You)"}
+              {player.name} {isSelf && "(You)"}{(player as any).isBot && " 🤖"}
             </span>
             {player.finishedPrep && (
               <span className="text-[9px] bg-white/10 px-1.5 py-0.5 rounded text-white/40 uppercase tracking-tighter">Done</span>
@@ -1263,7 +1265,8 @@ function LobbyScreen({ gameState, myId, roomId, onStart }: {
   const isHost = gameState.players[0]?.id === myId;
   const maxPlayers: number = (gameState as any).maxPlayers ?? 4;
   const filledSlots = gameState.players.length;
-  const canStart = isHost && filledSlots >= 1;
+  const hasBot = gameState.players.some((p: any) => p.isBot);
+  const canStart = isHost && filledSlots >= 1 && (filledSlots >= 2 || hasBot);
 
   const handleKick = (targetId: string) => {
     socket.emit("kick_player", { roomId, targetId });
@@ -1271,6 +1274,10 @@ function LobbyScreen({ gameState, myId, roomId, onStart }: {
 
   const handleSetMax = (n: number) => {
     socket.emit("set_max_players", { roomId, maxPlayers: n });
+  };
+
+  const handleAddAI = () => {
+    socket.emit("add_ai_player", { roomId });
   };
 
   return (
@@ -1330,6 +1337,7 @@ function LobbyScreen({ gameState, myId, roomId, onStart }: {
           {gameState.players.map((p, i) => {
             const isMe = p.id === myId;
             const isPlayerHost = i === 0;
+            const isBot = (p as any).isBot;
             return (
               <motion.div
                 key={p.id}
@@ -1343,18 +1351,22 @@ function LobbyScreen({ gameState, myId, roomId, onStart }: {
                 <span className="flex-1 text-sm font-bold truncate">
                   {p.name} {isMe && <span className="text-white/30 font-normal">(You)</span>}
                 </span>
-                {isPlayerHost && (
+                {isBot && (
+                  <span className="text-[9px] font-black uppercase tracking-widest text-purple-400 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded shrink-0">
+                    🤖 AI
+                  </span>
+                )}
+                {isPlayerHost && !isBot && (
                   <span className="text-[9px] font-black uppercase tracking-widest text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 px-1.5 py-0.5 rounded shrink-0">
                     👑 Host
                   </span>
                 )}
-                {/* Kick button — host only, not on self */}
                 {isHost && !isMe && (
                   <button
                     onClick={() => handleKick(p.id)}
                     className="text-[9px] font-bold uppercase tracking-wider text-red-400/70 hover:text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 px-2 py-1 rounded-lg transition-all shrink-0"
                   >
-                    Kick
+                    {isBot ? "Remove" : "Kick"}
                   </button>
                 )}
               </motion.div>
@@ -1377,6 +1389,17 @@ function LobbyScreen({ gameState, myId, roomId, onStart }: {
         <div className="px-6 pb-6 space-y-3">
           {isHost ? (
             <>
+              {/* Add AI button */}
+              {filledSlots < maxPlayers && (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleAddAI}
+                  className="w-full py-2.5 rounded-xl font-bold uppercase tracking-widest text-sm transition-all bg-purple-900/30 hover:bg-purple-800/40 text-purple-300 border border-purple-500/30 hover:border-purple-500/50"
+                >
+                  🤖 Add AI Opponent
+                </motion.button>
+              )}
               <motion.button
                 whileHover={canStart ? { scale: 1.02 } : {}}
                 whileTap={canStart ? { scale: 0.98 } : {}}
@@ -1392,7 +1415,7 @@ function LobbyScreen({ gameState, myId, roomId, onStart }: {
                 {canStart ? "⚔ Start Dungeon" : `Waiting for players... (${filledSlots}/${maxPlayers})`}
               </motion.button>
               <p className="text-[10px] text-white/25 text-center">
-                You can start with 2+ players. Share the room code above to invite others.
+                {hasBot ? "Playing vs AI. Add more humans or AI opponents to fill the room." : "Share the room code above to invite others, or add an AI opponent."}
               </p>
             </>
           ) : (
