@@ -39,20 +39,19 @@ async function startServer() {
   }
 
   function createDecks() {
-    const heroDeck: any[] = [];
+    const mainDeck: any[] = [];
     HERO_CARDS.forEach(card => {
       let count = 0;
       if (card.rarity === Rarity.NORMAL) count = 2;
       if (card.rarity === Rarity.EPIC) count = 2;
       if (card.rarity === Rarity.LEGENDARY) count = 2;
       for (let i = 0; i < count; i++) {
-        heroDeck.push({ ...card, id: `${card.id}_${i}` });
+        mainDeck.push({ ...card, id: `${card.id}_${i}` });
       }
     });
 
-    const gearDeck: any[] = [];
-    GEAR_CARDS.forEach(card => {
-      gearDeck.push({ ...card });
+    GEAR_CARDS.forEach((card, i) => {
+      mainDeck.push({ ...card, id: `${card.id}_m${i}` });
     });
 
     const specialDeck: any[] = [];
@@ -67,7 +66,7 @@ async function startServer() {
       bonusDeck.push({ ...card, id: `${card.id}_1` });
     });
 
-    return { heroDeck: shuffle(heroDeck), gearDeck: shuffle(gearDeck), specialDeck: shuffle(specialDeck), bonusDeck: shuffle(bonusDeck) };
+    return { mainDeck: shuffle(mainDeck), specialDeck: shuffle(specialDeck), bonusDeck: shuffle(bonusDeck) };
   }
 
   function drawCards(deck: any[], count: number, guaranteeEpic = false) {
@@ -183,8 +182,10 @@ async function startServer() {
           game.actionSpaces.push(
             { id: "s_lumber", used: false, type: "SECONDARY", label: "Purchase Lumber (2)", cost: 6, reward: { wood: 2 } },
             { id: "s_stone", used: false, type: "SECONDARY", label: "Purchase Stone (1)", cost: 6, reward: { stone: 1 } },
-            { id: "s_up_wall", used: false, type: "SECONDARY", label: "Upgrade Wall (1 Stone)", cost: 10, reward: { upgrade: "WALL" } },
-            { id: "s_up_moat", used: false, type: "SECONDARY", label: "Upgrade Moat", cost: 4, reward: { upgrade: "MOAT" } }
+            { id: "s_up_wall", used: false, type: "SECONDARY", label: "Upgrade Wall (1 Stone)", cost: 10, reward: { structure: StructureType.WALL } },
+            { id: "s_up_moat", used: false, type: "SECONDARY", label: "Upgrade Moat", cost: 4, reward: { structure: StructureType.MOAT } },
+            { id: "s_summon", used: false, type: "SECONDARY", label: "Summon Hero (S)", cost: 8, reward: { hero: true } },
+            { id: "s_gear", used: false, type: "SECONDARY", label: "Create Gear (S)", cost: 8, reward: { gear: true } }
           );
         }
 
@@ -413,13 +414,21 @@ async function startServer() {
 
         // Initialize drafting hands
         game.players.forEach((p: any) => {
-          p.draftHand = drawCards(game.heroDeck, 6, true);
+          p.draftHand = drawCards(game.mainDeck, 6, true);
         });
 
         game.logs.push("Game started! Drafting phase begins.");
 
         if (game.players.length >= 3) {
-          game.actionSpaces.push({ id: "p_summon2", used: false, type: "PRIMARY", label: "Summon Hero (2)", cost: 8, reward: { hero: true } });
+          game.actionSpaces.push(
+            { id: "p_summon2", used: false, type: "PRIMARY", label: "Summon Hero (2)", cost: 8, reward: { hero: true } },
+            { id: "s_lumber", used: false, type: "SECONDARY", label: "Purchase Lumber (2)", cost: 6, reward: { wood: 2 } },
+            { id: "s_stone", used: false, type: "SECONDARY", label: "Purchase Stone (1)", cost: 6, reward: { stone: 1 } },
+            { id: "s_up_wall", used: false, type: "SECONDARY", label: "Upgrade Wall (1 Stone)", cost: 10, reward: { structure: StructureType.WALL } },
+            { id: "s_up_moat", used: false, type: "SECONDARY", label: "Upgrade Moat", cost: 4, reward: { structure: StructureType.MOAT } },
+            { id: "s_summon", used: false, type: "SECONDARY", label: "Summon Hero (S)", cost: 8, reward: { hero: true } },
+            { id: "s_gear", used: false, type: "SECONDARY", label: "Create Gear (S)", cost: 8, reward: { gear: true } }
+          );
         }
 
         io.to(roomId).emit("game_updated", game);
@@ -521,7 +530,7 @@ async function startServer() {
         player.gear.push(card);
 
         if (player.draftedCards.length === 0) {
-          player.draftedCards = drawCards(game.heroDeck, 6);
+          player.draftedCards = drawCards(game.mainDeck, 6);
           game.logs.push(`${player.name} ran out of cards and drew 6 new ones!`);
         }
       }
@@ -583,7 +592,7 @@ async function startServer() {
         }
 
         if (player.draftedCards.length === 0) {
-          player.draftedCards = drawCards(game.heroDeck, 6);
+          player.draftedCards = drawCards(game.mainDeck, 6);
           game.logs.push(`${player.name} ran out of cards and drew 6 new ones!`);
         }
       }
@@ -610,11 +619,12 @@ async function startServer() {
       if (action.reward.mana) player.mana += manaAmount;
 
       // Reset accumulation spaces to base value
-      if (action.id === "p_lumber") action.reward.wood = 4;
-      if (action.id === "p_clay") action.reward.clay = 1;
-      if (action.id === "p_stone") action.reward.stone = 1;
-      if (action.id === "s_lumber") action.reward.wood = 2;
-      if (action.id === "s_stone") action.reward.stone = 1;
+      // Reset accumulation spaces to 0 so they receive the base increment next round
+      if (action.id === "p_lumber") action.reward.wood = 0;
+      if (action.id === "p_clay") action.reward.clay = 0;
+      if (action.id === "p_stone") action.reward.stone = 0;
+      if (action.id === "s_lumber") action.reward.wood = 0;
+      if (action.id === "s_stone") action.reward.stone = 0;
 
       if (action.reward.structure) {
         const tile = game.board[tileId];
@@ -630,7 +640,7 @@ async function startServer() {
           }
           tile.structure = action.reward.structure;
           tile.isOccupied = true;
-          if (actionId === "p_wall") player.wood -= 2;
+          if (actionId === "p_wall" || actionId === "s_up_wall") player.wood -= 2;
           if (actionId === "p_barracks") { player.wood -= 6; player.clay -= 2; }
           if (actionId === "p_smithy") { player.clay -= 1; player.stone -= 2; }
         } else {
