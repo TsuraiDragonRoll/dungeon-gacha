@@ -57,6 +57,7 @@ export default function App() {
   const [showRulebook, setShowRulebook] = useState(false);
   const [showDraftedHand, setShowDraftedHand] = useState(false);
   const [mobileTab, setMobileTab] = useState<"board" | "stats" | "actions">("board");
+  const [pendingWallTiles, setPendingWallTiles] = useState<number[]>([]);
   const [mySocketId, setMySocketId] = useState<string>(socket.id ?? "");
 
   useEffect(() => {
@@ -108,7 +109,12 @@ export default function App() {
     const action = gameState.actionSpaces.find(a => a.id === actionId);
     if (!action) return;
 
-    if (actionId.includes("wall") || actionId.includes("moat") || actionId.includes("barracks") || actionId.includes("smithy")) {
+    if (actionId.includes("wall")) {
+      // Wall: multi-tile mode — reset pending selection and wait for tile clicks + confirm
+      setSelectedAction(actionId);
+      setPendingWallTiles([]);
+      setSelectedCard(null);
+    } else if (actionId.includes("moat") || actionId.includes("barracks") || actionId.includes("smithy")) {
       setSelectedAction(actionId);
       setSelectedCard(null);
     } else if (actionId.includes("summon") || actionId.includes("gear")) {
@@ -122,6 +128,13 @@ export default function App() {
       setSelectedAction(null);
       setSelectedCard(null);
     }
+  };
+
+  const handleWallConfirm = () => {
+    if (!selectedAction || pendingWallTiles.length === 0) return;
+    socket.emit("build_walls", { roomId, actionId: selectedAction, tileIds: pendingWallTiles });
+    setSelectedAction(null);
+    setPendingWallTiles([]);
   };
 
   const handleManaConfirm = () => {
@@ -144,6 +157,11 @@ export default function App() {
       } else {
         setSelectedTile(tileId);
       }
+    } else if (selectedAction?.includes("wall")) {
+      // Multi-tile wall placement: toggle tile in/out of pending set
+      setPendingWallTiles(prev =>
+        prev.includes(tileId) ? prev.filter(t => t !== tileId) : [...prev, tileId]
+      );
     } else if (selectedAction) {
       const action = gameState.actionSpaces.find(a => a.id === selectedAction);
       if (action?.reward.structure) {
@@ -566,6 +584,7 @@ export default function App() {
                     players={gameState.players}
                     onClick={() => handleTileClick(i)}
                     isSelected={selectedTile === i}
+                    isPendingWall={pendingWallTiles.includes(i)}
                   />
                 ))}
               </div>
@@ -664,6 +683,52 @@ export default function App() {
               {selectedAction && (selectedAction.includes("summon") || selectedAction.includes("gear")) && (
                 <div className="mt-4 p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
                   <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider mb-2">Select a card from your Drafted Hand below</p>
+                </div>
+              )}
+              {/* Wall multi-select banner */}
+              {selectedAction?.includes("wall") && (
+                <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="text-lg">🧱</span>
+                    <div className="flex-1">
+                      <p className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">
+                        Click your tiles to select walls — click again to deselect
+                      </p>
+                      {pendingWallTiles.length > 0 ? (
+                        <p className="text-[10px] text-white/50 mt-0.5">
+                          {pendingWallTiles.length} wall{pendingWallTiles.length > 1 ? "s" : ""} selected
+                          · costs <span className="text-amber-400 font-bold">{pendingWallTiles.length * 2} Wood</span>
+                          {me && me.wood < pendingWallTiles.length * 2 && (
+                            <span className="text-red-400 ml-1">(need {pendingWallTiles.length * 2 - me.wood} more Wood)</span>
+                          )}
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-white/30 mt-0.5">No tiles selected yet</p>
+                      )}
+                    </div>
+                    <button onClick={() => { setSelectedAction(null); setPendingWallTiles([]); }}
+                      className="text-white/30 hover:text-white/60 text-[9px] uppercase font-bold shrink-0">Cancel</button>
+                  </div>
+                  {pendingWallTiles.length > 0 && (
+                    <button
+                      onClick={handleWallConfirm}
+                      disabled={!me || me.wood < pendingWallTiles.length * 2}
+                      className="w-full py-2 bg-amber-600/30 hover:bg-amber-600/50 disabled:opacity-30 disabled:cursor-not-allowed text-amber-300 border border-amber-500/40 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all"
+                    >
+                      Build {pendingWallTiles.length} Wall{pendingWallTiles.length > 1 ? "s" : ""} (costs {pendingWallTiles.length * 2} Wood)
+                    </button>
+                  )}
+                </div>
+              )}
+              {/* Single-tile structure banner (moat / barracks / smithy) */}
+              {selectedAction && (selectedAction.includes("moat") || selectedAction.includes("barracks") || selectedAction.includes("smithy")) && (
+                <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center gap-3">
+                  <span className="text-xl">🏗</span>
+                  <p className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">
+                    Now click one of <span className="text-white">your tiles</span> on the board to place the structure.
+                    {selectedAction.includes("up_moat") && " (Must already have a Moat)"}
+                  </p>
+                  <button onClick={() => setSelectedAction(null)} className="ml-auto text-white/30 hover:text-white/60 text-[9px] uppercase font-bold shrink-0">Cancel</button>
                 </div>
               )}
               {selectedAction && selectedAction.includes("mana") && (
@@ -1579,8 +1644,8 @@ function StatCard({ icon, label, value }: { icon: React.ReactNode, label: string
   );
 }
 
-function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSelected: boolean, key?: any }) {
-  const { tile, players, onClick, isSelected } = props;
+function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSelected: boolean, isPendingWall?: boolean, key?: any }) {
+  const { tile, players, onClick, isSelected, isPendingWall } = props;
   const owner = players.find(p => p.id === tile.ownerId);
   const [hovered, setHovered] = React.useState(false);
   const tileRef = React.useRef<HTMLButtonElement>(null);
@@ -1634,6 +1699,7 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
           "w-8 h-8 md:w-12 md:h-12 rounded-sm flex items-center justify-center relative transition-all",
           owner ? "shadow-inner" : "bg-[#1a1c21] hover:bg-white/10",
           isSelected && "ring-2 ring-emerald-500 ring-offset-2 ring-offset-black",
+          isPendingWall && "ring-2 ring-amber-400 ring-offset-1 ring-offset-black brightness-125",
           tile.id === 40 && "border-2 border-dashed border-yellow-500/50"
         )}
         style={{ backgroundColor: owner ? `${owner.color}44` : undefined, borderColor: owner ? owner.color : 'rgba(255,255,255,0.1)', borderWidth: owner ? '1px' : '0px' }}
