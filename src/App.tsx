@@ -56,6 +56,7 @@ export default function App() {
   const [manaAmount, setManaAmount] = useState(1);
   const [showRulebook, setShowRulebook] = useState(false);
   const [showDraftedHand, setShowDraftedHand] = useState(false);
+  const [mobileTab, setMobileTab] = useState<"board" | "stats" | "actions">("board");
   const [mySocketId, setMySocketId] = useState<string>(socket.id ?? "");
 
   useEffect(() => {
@@ -299,8 +300,8 @@ export default function App() {
   const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === mySocketId;
 
   return (
-    <div className="h-screen bg-[#0a0502] text-white flex flex-row font-sans selection:bg-emerald-500/30 overflow-hidden">      {/* Sidebar: Stats & Logs */}
-      <div className="w-56 xl:w-64 bg-[#151619] border-r border-white/5 flex flex-col h-full shrink-0">
+    <div className="h-screen bg-[#0a0502] text-white flex flex-row font-sans selection:bg-emerald-500/30 overflow-hidden">      {/* Sidebar: Stats & Logs — desktop only */}
+      <div className="hidden md:flex w-56 xl:w-64 bg-[#151619] border-r border-white/5 flex-col h-full shrink-0">
         <div className="p-6 border-bottom border-white/5">
           <div className="flex items-center gap-2 mb-3">
             <Castle className="w-5 h-5 text-emerald-500" />
@@ -348,7 +349,7 @@ export default function App() {
       </div>
 
       {/* Main Area: Board & Controls */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
+      <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0 pb-14 md:pb-0">
         {/* Header / Phase Info */}
         <div className="border-b border-white/5 bg-[#151619]/50 backdrop-blur-xl">
           {/* Row 1: phase + turn + action button */}
@@ -432,7 +433,7 @@ export default function App() {
           </div>}
         </div>
 
-        <div className="flex-1 flex items-center justify-center p-8 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#1a1c21] to-[#0a0502]">
+        <div className="flex-1 flex items-center justify-center p-2 md:p-4 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#1a1c21] to-[#0a0502] overflow-hidden min-h-0">
           {gameState.status === Phase.BIDDING_WAR ? (
             <div className="max-w-md w-full bg-[#151619] border border-white/10 rounded-3xl p-8 text-center shadow-2xl">
               <Gem className="w-16 h-16 text-red-500 mx-auto mb-6" />
@@ -555,7 +556,8 @@ export default function App() {
               </AnimatePresence>
             </div>
           ) : (
-            <div className="relative group flex items-center justify-center">
+            // The outer div must be h-full + overflow-hidden so board-grid's max-height:100% works
+            <div className="relative group flex items-center justify-center h-full w-full overflow-hidden">
               <div className="grid grid-cols-9 gap-0.5 bg-white/5 p-1 rounded-lg border border-white/10 shadow-2xl board-grid">
                 {gameState.board.map((tile, i) => (
                   <TileView
@@ -571,8 +573,8 @@ export default function App() {
           )}
         </div>
 
-        {/* Bottom Panel: Actions / Hand */}
-        <div className="shrink-0 border-t border-white/5 bg-[#151619] p-3 flex gap-4 overflow-x-auto" style={{ minHeight: '10rem', maxHeight: '14rem' }}>
+        {/* Bottom Panel: Actions / Hand — desktop only */}
+        <div className="hidden md:flex shrink-0 border-t border-white/5 bg-[#151619] p-3 gap-4 overflow-x-auto" style={{ minHeight: '10rem', maxHeight: '14rem' }}>
           {gameState.status === Phase.ATTACK && isMyTurn && selectedTile !== null && gameState.board[selectedTile].monsterType !== null && (
             <div className="w-48 flex flex-col gap-3 pr-6 border-r border-white/5">
               <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30">Mana Attack</h3>
@@ -754,6 +756,193 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* ═══ MOBILE TAB BAR ════════════════════════════════════════════════ */}
+      {/* Shown only on small screens; replaces sidebar + bottom panel UX     */}
+      <div className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#151619] border-t border-white/10 flex">
+        {([
+          { id: "board", label: "Board", icon: <Castle className="w-5 h-5" /> },
+          { id: "stats", label: "Stats", icon: <User className="w-5 h-5" /> },
+          { id: "actions", label: "Actions", icon: <Sword className="w-5 h-5" /> },
+        ] as const).map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setMobileTab(tab.id)}
+            className={cn(
+              "flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-bold uppercase tracking-widest transition-all",
+              mobileTab === tab.id ? "text-emerald-400" : "text-white/30"
+            )}
+          >
+            {tab.icon}
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ═══ MOBILE PANELS ════════════════════════════════════════════════ */}
+      {/* Stats panel slides up from bottom on mobile */}
+      <AnimatePresence>
+        {mobileTab === "stats" && (
+          <motion.div
+            initial={{ y: "100%" }}
+            animate={{ y: 0 }}
+            exit={{ y: "100%" }}
+            transition={{ type: "spring", damping: 30, stiffness: 300 }}
+            className="md:hidden fixed inset-0 bottom-14 z-30 bg-[#151619] overflow-y-auto p-4"
+          >
+            <h2 className="text-xs font-bold uppercase tracking-widest text-white/30 mb-4">Your Stats</h2>
+            {me && (
+              <div className="grid grid-cols-2 gap-2 mb-6">
+                <div className="relative">
+                  <StatCard icon={<Gem className="w-4 h-4 text-red-500" />} label="Gems" value={me.gemstones} />
+                  <div className="absolute -top-1 -right-1 bg-red-500/20 border border-red-500/30 px-1 rounded text-[8px] font-bold text-red-400">
+                    +{getNextIncomeValue(me)} next
+                  </div>
+                </div>
+                <StatCard icon={<Zap className="w-4 h-4 text-blue-400" />} label="Mana" value={me.mana} />
+                <StatCard icon={<Trees className="w-4 h-4 text-amber-600" />} label="Wood" value={me.wood} />
+                <StatCard icon={<Mountain className="w-4 h-4 text-stone-400" />} label="Stone" value={me.stone} />
+              </div>
+            )}
+            <h2 className="text-xs font-bold uppercase tracking-widest text-white/30 mb-3">Players</h2>
+            <div className="space-y-2 mb-6">
+              {gameState.players.map((p, i) => (
+                <PlayerRow key={p.id} player={p} isActive={i === gameState.currentPlayerIndex} isSelf={p.id === mySocketId} />
+              ))}
+            </div>
+            <h2 className="text-xs font-bold uppercase tracking-widest text-white/30 mb-2">Chronicles</h2>
+            {gameState.logs.slice(-8).reverse().map((log, i) => (
+              <p key={i} className="text-[11px] text-white/50 mb-1 leading-relaxed">
+                <span className="text-emerald-500 mr-1">»</span> {log}
+              </p>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {mobileTab === "actions" && (
+          <motion.div
+            initial={{ y: "100%" }}
+            animate={{ y: 0 }}
+            exit={{ y: "100%" }}
+            transition={{ type: "spring", damping: 30, stiffness: 300 }}
+            className="md:hidden fixed inset-0 bottom-14 z-30 bg-[#151619] overflow-y-auto p-4"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xs font-bold uppercase tracking-widest text-white/30">Actions</h2>
+              <button onClick={() => setShowDraftedHand(true)}
+                className="flex items-center gap-1.5 text-[10px] font-bold text-white/50 bg-white/5 border border-white/10 px-3 py-1.5 rounded-full">
+                <Scroll className="w-3 h-3" /> Hand ({me?.draftedCards.length || 0})
+              </button>
+            </div>
+
+            {/* Prep Actions */}
+            {gameState.status === Phase.PREPARATION && isMyTurn && (
+              <div className="mb-4">
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  {gameState.actionSpaces.map(action => (
+                    <ActionButton
+                      key={action.id}
+                      action={action}
+                      onClick={() => handlePrepAction(action.id)}
+                      disabled={action.used || (me && me.gemstones < action.cost)}
+                      active={selectedAction === action.id}
+                      me={me}
+                    />
+                  ))}
+                </div>
+                {selectedAction && selectedAction.includes("mana") && (
+                  <div className="mt-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl flex flex-col gap-3">
+                    <p className="text-[10px] text-blue-400 font-bold uppercase">Mana amount (1 mana = 2 gems)</p>
+                    <div className="flex items-center gap-3">
+                      <input type="range" min="1" max={me ? Math.max(1, Math.floor(me.gemstones / 2)) : 1}
+                        value={manaAmount} onChange={e => setManaAmount(Number(e.target.value))}
+                        className="flex-1 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                      <span className="text-sm font-mono text-blue-400">{manaAmount}</span>
+                    </div>
+                    <button onClick={handleManaConfirm} disabled={!me || me.gemstones < 2}
+                      className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-white/5 disabled:text-white/20 text-white text-[10px] font-bold uppercase tracking-widest py-2.5 rounded-lg">
+                      Confirm ({manaAmount * 2} Gems)
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Finish Prep */}
+            {gameState.status === Phase.PREPARATION && (
+              <button onClick={me?.finishedPrep ? handleUndoFinishPrep : handleFinishPrep}
+                className={cn(
+                  "w-full py-3 rounded-xl font-bold uppercase tracking-widest text-sm mb-4",
+                  me?.finishedPrep
+                    ? "bg-orange-600/20 text-orange-400 border border-orange-500/30"
+                    : "bg-red-600/20 text-red-400 border border-red-500/30"
+                )}>
+                {me?.finishedPrep ? "Undo Finish Prep" : "Finish Prep"}
+              </button>
+            )}
+
+            {/* Active Heroes & Gear */}
+            {(gameState.status === Phase.PREPARATION || gameState.status === Phase.ATTACK) && (
+              <div className="mb-4">
+                <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Active Heroes & Gear</h3>
+                <div className="flex gap-3 overflow-x-auto pb-2">
+                  {[...(me?.heroes || []), ...(me?.gear || [])].map(item => (
+                    <div key={item.id} className="w-28 shrink-0">
+                      <CardView card={item} onSelect={() => handleActiveCardClick(item.id)}
+                        active={selectedCard === item.id}
+                        disabled={gameState.status === Phase.ATTACK && !!item.abilityUsed}
+                        spent={!!item.abilityUsed} />
+                    </div>
+                  ))}
+                  {[...(me?.heroes || []), ...(me?.gear || [])].length === 0 && (
+                    <p className="text-[10px] text-white/20 italic">No heroes or gear yet.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Mana Attack (Attack phase) */}
+            {gameState.status === Phase.ATTACK && isMyTurn && selectedTile !== null && gameState.board[selectedTile].monsterType !== null && (
+              <div className="mb-4 p-3 bg-blue-600/10 border border-blue-500/20 rounded-xl">
+                <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Mana Attack</h3>
+                <div className="flex items-center gap-3 mb-2">
+                  <input type="range" min="1" max={me ? Math.max(1, me.mana) : 1}
+                    value={manaAmount} onChange={e => setManaAmount(Number(e.target.value))}
+                    className="flex-1 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                  <span className="text-sm font-mono text-blue-400">{manaAmount}</span>
+                </div>
+                <button onClick={() => { handleManaAttack(selectedTile, manaAmount); setManaAmount(1); }}
+                  disabled={!me || me.mana < 1}
+                  className="w-full py-2 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-lg text-[10px] font-bold uppercase">
+                  Attack ({manaAmount * 2} DMG)
+                </button>
+              </div>
+            )}
+
+            {/* Bonus Cards */}
+            {me && me.bonusCards && me.bonusCards.length > 0 && (
+              <div>
+                <h3 className="text-[10px] font-bold uppercase tracking-widest text-yellow-400/70 mb-2">⭐ Bonus Cards</h3>
+                <div className="space-y-2">
+                  {me.bonusCards.map((c: any) => (
+                    <BonusCardView key={c.id} card={c} onPlay={() => handleBonusCardPlay(c.id)} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* End Turn */}
+            {isMyTurn && gameState.status === Phase.ATTACK && (
+              <button onClick={handleEndTurn}
+                className="w-full mt-4 py-3 bg-white text-black rounded-xl text-sm font-bold uppercase tracking-widest hover:bg-emerald-400 transition-colors">
+                End Turn →
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showDraftedHand && (

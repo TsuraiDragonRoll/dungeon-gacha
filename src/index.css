@@ -8,19 +8,36 @@
 }
 
 /* Full-bleed layout helpers */
-html, body, #root {
+html,
+body,
+#root {
   height: 100%;
   overflow: hidden;
 }
 
-/* Make the grid board always square and fill available space */
+/* Make the grid board always square and constrained by the available container height */
 .board-grid {
+  /* Cap width at the available container width, or the available height (whichever is smaller) */
+  width: min(100%, var(--board-max, 100%));
   aspect-ratio: 1 / 1;
-  width: min(100%, 60vh);
+  max-height: 100%;
 }
 
 /* Thin custom scrollbar */
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
