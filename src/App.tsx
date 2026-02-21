@@ -27,6 +27,22 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const calculateIncomeValue = (tilesCount: number) => {
+  if (tilesCount >= 3 && tilesCount <= 5) return tilesCount * 4;
+  if (tilesCount >= 6 && tilesCount <= 10) return tilesCount * 3;
+  if (tilesCount >= 11 && tilesCount <= 17) return tilesCount * 2;
+  if (tilesCount >= 18) return tilesCount * 1;
+  return 0;
+};
+
+const getNextIncomeValue = (p: any) => {
+  let income = calculateIncomeValue(p.tilesCount || 0);
+  if (p.gear?.some((g: any) => g.id === "g_taxbox")) {
+    income += (p.tilesCount || 0);
+  }
+  return income;
+};
+
 const socket: Socket = io("https://dungeon-gacha.onrender.com");
 
 export default function App() {
@@ -39,6 +55,7 @@ export default function App() {
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [manaAmount, setManaAmount] = useState(1);
   const [showRulebook, setShowRulebook] = useState(false);
+  const [showDraftedHand, setShowDraftedHand] = useState(false);
   const [mySocketId, setMySocketId] = useState<string>(socket.id ?? "");
 
   useEffect(() => {
@@ -142,6 +159,7 @@ export default function App() {
       socket.emit("prep_action", { roomId, actionId: selectedAction, cardId });
       setSelectedAction(null);
       setSelectedCard(null);
+      setShowDraftedHand(false);
     }
   };
 
@@ -293,7 +311,12 @@ export default function App() {
           {me && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-2">
-                <StatCard icon={<Gem className="w-4 h-4 text-red-500" />} label="Gems" value={me.gemstones} />
+                <div className="relative">
+                  <StatCard icon={<Gem className="w-4 h-4 text-red-500" />} label="Gems" value={me.gemstones} />
+                  <div className="absolute -top-1 -right-1 bg-red-500/20 border border-red-500/30 px-1 rounded text-[8px] font-bold text-red-400">
+                    +{getNextIncomeValue(me)} next
+                  </div>
+                </div>
                 <StatCard icon={<Zap className="w-4 h-4 text-blue-400" />} label="Mana" value={me.mana} />
                 <StatCard icon={<Trees className="w-4 h-4 text-amber-600" />} label="Wood" value={me.wood} />
                 <StatCard icon={<Mountain className="w-4 h-4 text-stone-400" />} label="Stone" value={me.stone} />
@@ -339,14 +362,23 @@ export default function App() {
               </span>
             </div>
 
-            {isMyTurn && gameState.status === Phase.ATTACK && (
+            <div className="flex items-center gap-3">
               <button
-                onClick={handleEndTurn}
-                className="flex items-center gap-2 bg-white text-black px-4 py-1.5 rounded-full text-xs font-bold hover:bg-emerald-400 transition-colors"
+                onClick={() => setShowRulebook(true)}
+                className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all"
               >
-                Confirm Turn <ArrowRight className="w-3 h-3" />
+                <Scroll className="w-3 h-3 text-yellow-500" /> Rulebook
               </button>
-            )}
+
+              {isMyTurn && gameState.status === Phase.ATTACK && (
+                <button
+                  onClick={handleEndTurn}
+                  className="flex items-center gap-2 bg-white text-black px-4 py-1.5 rounded-full text-xs font-bold hover:bg-emerald-400 transition-colors"
+                >
+                  Confirm Turn <ArrowRight className="w-3 h-3" />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Row 2: turn order strip */}
@@ -615,41 +647,54 @@ export default function App() {
             </div>
           )}
 
-          <div className="w-80 flex flex-col">
-            <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-4">Drafted Hand</h3>
-            <div className="flex-1 overflow-y-auto space-y-4 pr-2">
-              {me?.draftedCards.map(c => (
-                <CardView
-                  key={c.id}
-                  card={c}
-                  onSelect={() => handleDraftedCardClick(c.id)}
-                  disabled={!selectedAction || (!selectedAction.includes("summon") && c.type === "HERO") || (!selectedAction.includes("gear") && c.type === "GEAR")}
-                />
-              ))}
-              {me?.draftedCards.length === 0 && <p className="text-[10px] text-white/20 italic">No cards left in hand.</p>}
-            </div>
+          {/* View Hand Button */}
+          <div className="w-48 flex flex-col gap-3 pr-6 border-r border-white/5 shrink-0">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30">Your Hand</h3>
+            <button
+              onClick={() => setShowDraftedHand(true)}
+              className="flex-1 flex flex-col items-center justify-center gap-2 bg-white/5 hover:bg-white/10 border border-dashed border-white/20 rounded-xl transition-all group"
+            >
+              <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-white/10 transition-colors">
+                <Scroll className="w-5 h-5 text-white/40 group-hover:text-white/60" />
+              </div>
+              <div className="text-center">
+                <div className="text-[10px] font-bold text-white/60">View Cards</div>
+                <div className="text-[9px] text-white/30">{me?.draftedCards.length || 0} in hand</div>
+              </div>
+            </button>
           </div>
 
           {(gameState.status === Phase.PREPARATION || gameState.status === Phase.ATTACK) && (
-            <div className="w-80 flex flex-col">
-              <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-4">Active Heroes & Gear</h3>
-              <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+            <div className="flex-1 min-w-[320px] flex flex-col">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30">Active Heroes & Gear</h3>
+                <span className="text-[9px] text-white/20 font-mono">
+                  {([...(me?.heroes || []), ...(me?.gear || [])]).length} SLOTS USED
+                </span>
+              </div>
+              <div className="flex-1 overflow-x-auto overflow-y-hidden flex gap-4 pb-2 scrollbar-thin scrollbar-thumb-white/10">
                 {[...(me?.heroes || []), ...(me?.gear || [])].map(item => (
-                  <CardView
-                    key={item.id}
-                    card={item}
-                    onSelect={() => handleActiveCardClick(item.id)}
-                    active={selectedCard === item.id}
-                    disabled={gameState.status === Phase.ATTACK && !!item.abilityUsed}
-                    spent={!!item.abilityUsed}
-                  />
+                  <div key={item.id} className="w-40 shrink-0">
+                    <CardView
+                      card={item}
+                      onSelect={() => handleActiveCardClick(item.id)}
+                      active={selectedCard === item.id}
+                      disabled={gameState.status === Phase.ATTACK && !!item.abilityUsed}
+                      spent={!!item.abilityUsed}
+                    />
+                  </div>
                 ))}
+                {([...(me?.heroes || []), ...(me?.gear || [])]).length === 0 && (
+                  <div className="flex-1 flex items-center justify-center border border-dashed border-white/5 rounded-xl">
+                    <p className="text-[10px] text-white/10 italic">Your army is empty. Summon heroes to begin.</p>
+                  </div>
+                )}
               </div>
             </div>
           )}
 
           {me && me.bonusCards && me.bonusCards.length > 0 && (
-            <div className="w-80 flex flex-col">
+            <div className="w-64 flex flex-col shrink-0 border-l border-white/5 pl-6">
               <h3 className="text-[10px] font-bold uppercase tracking-widest text-yellow-400/70 mb-4">⭐ Bonus Cards</h3>
               <div className="flex-1 overflow-y-auto space-y-4 pr-2">
                 {me.bonusCards.map((c: any) => (
@@ -664,7 +709,110 @@ export default function App() {
           )}
         </div>
       </div>
+
+      <AnimatePresence>
+        {showDraftedHand && (
+          <DraftedHandOverlay
+            cards={me?.draftedCards || []}
+            onSelect={handleDraftedCardClick}
+            onClose={() => setShowDraftedHand(false)}
+            selectedAction={selectedAction}
+          />
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+function DraftedHandOverlay({ cards, onSelect, onClose, selectedAction }: { cards: Card[], onSelect: (id: string) => void, onClose: () => void, selectedAction: string | null }) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-md flex items-center justify-center p-8"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.9, opacity: 0, y: 20 }}
+        className="w-full max-w-6xl flex flex-col gap-8"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-3xl font-bold uppercase tracking-tighter text-white">Your Arsenal</h2>
+            <p className="text-white/40 text-sm uppercase tracking-widest mt-1">
+              {cards.length} Cards available to summon or equip
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-12 h-12 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/40 hover:text-white transition-all text-2xl"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6 max-h-[70vh] overflow-y-auto p-4 -m-4">
+          {cards.map(c => {
+            const isDisabled = selectedAction !== null && (
+              (selectedAction.includes("summon") && c.type !== "HERO") ||
+              (selectedAction.includes("gear") && c.type !== "GEAR")
+            );
+
+            return (
+              <div key={c.id} className="relative group">
+                <CardView
+                  card={c}
+                  onSelect={() => onSelect(c.id)}
+                  disabled={isDisabled}
+                />
+                {isDisabled && (
+                  <div className="absolute inset-0 bg-black/60 rounded-xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                    <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest text-center px-4">
+                      Requires {c.type === "HERO" ? "Summon" : "Gear"} Action
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {cards.length === 0 && (
+            <div className="col-span-full py-20 flex flex-col items-center justify-center border border-dashed border-white/10 rounded-3xl bg-white/5">
+              <Scroll className="w-12 h-12 text-white/10 mb-4" />
+              <p className="text-white/30 italic uppercase tracking-widest text-sm">Your hand is empty</p>
+            </div>
+          )}
+        </div>
+
+        {selectedAction && (
+          <div className="bg-blue-500/10 border border-blue-500/20 p-6 rounded-2xl flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                <Zap className="w-5 h-5 text-blue-400" />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-blue-400 uppercase tracking-widest">Active Action</div>
+                <div className="text-lg font-bold text-white">Select a {selectedAction.includes("summon") ? "Hero" : "Gear"} to continue</div>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] text-white/40 uppercase tracking-widest mb-1">Cost will be deducted on selection</p>
+              <div className="flex gap-2">
+                <span className="px-3 py-1 bg-white/5 rounded-full text-[10px] font-bold text-white/60">Preparation Phase</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -682,7 +830,7 @@ function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolea
   };
 
   const resources = [
-    { label: "Gems", value: player.gemstones, color: "#ef4444", icon: "💎" },
+    { label: "Gems", value: player.gemstones, color: "#ef4444", icon: "💎", extra: ` (+${getNextIncomeValue(player)})` },
     { label: "Mana", value: player.mana, color: "#60a5fa", icon: "⚡" },
     { label: "Wood", value: player.wood, color: "#d97706", icon: "🌲" },
     { label: "Clay", value: player.clay, color: "#b45309", icon: "🧱" },
@@ -751,26 +899,52 @@ function PlayerRow({ player, isActive, isSelf }: { player: any; isActive: boolea
 
               {/* Resource rows */}
               <div className="px-3 py-2 space-y-1.5">
-                {resources.map(r => (
+                {resources.map((r: any) => (
                   <div key={r.label} className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-1.5">
                       <span className="text-[11px] leading-none">{r.icon}</span>
                       <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: r.color }}>{r.label}</span>
                     </div>
-                    <span className="text-[11px] font-mono font-bold text-white">{r.value}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-mono font-bold text-white">{r.value}</span>
+                      {r.extra && <span className="text-[8px] font-bold text-red-400 opacity-60">{r.extra}</span>}
+                    </div>
                   </div>
                 ))}
               </div>
 
-              {/* Heroes / Gear counts */}
+              {/* Heroes / Gear Details */}
               <div
-                className="px-3 py-2 border-t flex items-center justify-between gap-4"
+                className="px-3 py-2 border-t flex flex-col gap-2"
                 style={{ borderColor: `${player.color}20`, backgroundColor: `${player.color}0a` }}
               >
-                <span className="text-[9px] font-bold uppercase tracking-wider text-white/30">Heroes</span>
-                <span className="text-[11px] font-mono font-bold text-white/60">{player.heroes?.length ?? 0}</span>
-                <span className="text-[9px] font-bold uppercase tracking-wider text-white/30">Gear</span>
-                <span className="text-[11px] font-mono font-bold text-white/60">{player.gear?.length ?? 0}</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-white/30">Heroes</span>
+                  <span className="text-[11px] font-mono font-bold text-white/60">{player.heroes?.length ?? 0}</span>
+                </div>
+                {player.heroes?.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {player.heroes.map((h: any, i: number) => (
+                      <div key={i} className={cn("text-[9px] px-1.5 py-0.5 rounded border text-center", h.abilityUsed ? "bg-black/40 text-white/30 border-white/10" : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20")}>
+                        {h.name}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between mt-1">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-white/30">Gear</span>
+                  <span className="text-[11px] font-mono font-bold text-white/60">{player.gear?.length ?? 0}</span>
+                </div>
+                {player.gear?.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {player.gear.map((g: any, i: number) => (
+                      <div key={i} className={cn("text-[9px] px-1.5 py-0.5 rounded border text-center", g.abilityUsed ? "bg-black/40 text-white/30 border-white/10" : "bg-blue-500/10 text-blue-400 border-blue-500/20")}>
+                        {g.name}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </motion.div>
@@ -1196,78 +1370,91 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
   const hpPercent = tile.monsterMaxHP > 0 ? Math.max(0, (tile.monsterHP / tile.monsterMaxHP) * 100) : 0;
 
   return (
-    <motion.button
-      ref={tileRef}
-      whileHover={{ scale: 1.05, zIndex: 10 }}
-      whileTap={{ scale: 0.95 }}
-      onClick={onClick}
-      onMouseEnter={(e) => {
-        // e.clientX / e.clientY are exactly what position: fixed needs,
-        // ignoring scroll completely.
-        setTooltipPos({
-          top: e.clientY - 12,
-          left: e.clientX,
-        });
-        setHovered(true);
-      }}
-      onMouseMove={(e) => {
-        if (hovered) {
+    <>
+      <motion.button
+        ref={tileRef}
+        whileHover={{ scale: 1.05, zIndex: 10 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={onClick}
+        onMouseEnter={(e) => {
           setTooltipPos({
             top: e.clientY - 12,
             left: e.clientX,
           });
-        }
-      }}
-      onMouseLeave={() => setHovered(false)}
-      className={cn(
-        "w-8 h-8 md:w-12 md:h-12 rounded-sm flex items-center justify-center relative transition-all",
-        owner ? "shadow-inner" : "bg-[#1a1c21] hover:bg-white/10",
-        isSelected && "ring-2 ring-emerald-500 ring-offset-2 ring-offset-black",
-        tile.id === 40 && "border-2 border-dashed border-yellow-500/50"
-      )}
-      style={{ backgroundColor: owner ? `${owner.color}44` : undefined, borderColor: owner ? owner.color : 'rgba(255,255,255,0.1)', borderWidth: owner ? '1px' : '0px' }}
-    >
-      {tile.structure === StructureType.GATE && <Castle className="w-4 h-4 md:w-6 md:h-6 text-white" />}
-      {tile.structure === StructureType.WALL && <BrickWall className="w-4 h-4 md:w-6 md:h-6 text-white/80" />}
-      {tile.structure === StructureType.MOAT && <Waves className="w-4 h-4 md:w-6 md:h-6 text-blue-400" />}
-      {tile.structure === StructureType.BARRACKS && <Shield className="w-4 h-4 md:w-6 md:h-6 text-emerald-400" />}
-      {tile.structure === StructureType.SMITHY && <Hammer className="w-4 h-4 md:w-6 md:h-6 text-stone-400" />}
-      {tile.structure === StructureType.FLAGPOLE && <Flag className="w-4 h-4 md:w-6 md:h-6 text-yellow-500" />}
+          setHovered(true);
+        }}
+        onMouseMove={(e) => {
+          if (hovered) {
+            setTooltipPos({
+              top: e.clientY - 12,
+              left: e.clientX,
+            });
+          }
+        }}
+        onMouseLeave={() => setHovered(false)}
+        className={cn(
+          "w-8 h-8 md:w-12 md:h-12 rounded-sm flex items-center justify-center relative transition-all",
+          owner ? "shadow-inner" : "bg-[#1a1c21] hover:bg-white/10",
+          isSelected && "ring-2 ring-emerald-500 ring-offset-2 ring-offset-black",
+          tile.id === 40 && "border-2 border-dashed border-yellow-500/50"
+        )}
+        style={{ backgroundColor: owner ? `${owner.color}44` : undefined, borderColor: owner ? owner.color : 'rgba(255,255,255,0.1)', borderWidth: owner ? '1px' : '0px' }}
+      >
+        {tile.structure === StructureType.GATE && <Castle className="w-4 h-4 md:w-6 md:h-6 text-white" />}
+        {tile.structure === StructureType.WALL && <BrickWall className="w-4 h-4 md:w-6 md:h-6 text-white/80" />}
+        {tile.structure === StructureType.MOAT && <Waves className="w-4 h-4 md:w-6 md:h-6 text-blue-400" />}
+        {tile.structure === StructureType.BARRACKS && <Shield className="w-4 h-4 md:w-6 md:h-6 text-emerald-400" />}
+        {tile.structure === StructureType.SMITHY && <Hammer className="w-4 h-4 md:w-6 md:h-6 text-stone-400" />}
+        {tile.structure === StructureType.FLAGPOLE && <Flag className="w-4 h-4 md:w-6 md:h-6 text-yellow-500" />}
 
-      {tile.occupiedByHeroId && !tile.structure && (
-        <div className="absolute top-0.5 right-0.5">
-          <User className="w-2 h-2 md:w-3 md:h-3 text-emerald-400" />
-        </div>
-      )}
-
-      {/* Monster circle */}
-      {tile.monsterType && (
-        <div className="relative w-6 h-6 md:w-8 md:h-8 flex items-center justify-center">
-          <div className="absolute inset-0 bg-white rounded-full scale-110" />
-          <div
-            className="w-full h-full rounded-full flex items-center justify-center text-[8px] md:text-[10px] font-bold text-white shadow-lg"
-            style={{ backgroundColor: monsterColor }}
-          >
-            {tile.monsterHP}
+        {tile.occupiedByHeroId && !tile.structure && (
+          <div className="absolute top-0.5 right-0.5">
+            <User className="w-2 h-2 md:w-3 md:h-3 text-emerald-400" />
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Monster hover tooltip — fixed-positioned to escape overflow:hidden on grid cells */}
+        {/* Monster circle */}
+        {tile.monsterType && (
+          <div className="relative w-6 h-6 md:w-8 md:h-8 flex items-center justify-center">
+            <div className="absolute inset-0 bg-white rounded-full scale-110" />
+            <div
+              className="w-full h-full rounded-full flex items-center justify-center text-[8px] md:text-[10px] font-bold text-white shadow-lg"
+              style={{ backgroundColor: monsterColor }}
+            >
+              {tile.monsterHP}
+            </div>
+          </div>
+        )}
+
+        {/* Liberated tile indicator: owned, no monster, not occupied */}
+        {tile.ownerId && !tile.monsterType && !tile.isOccupied && (
+          <div
+            className="absolute top-0 left-0 w-3.5 h-3.5 flex items-center justify-center rounded-br-sm pointer-events-none z-10"
+            style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+          >
+            <span className="text-[8px] font-black leading-none" style={{ color: "#ef4444", textShadow: "0 0 4px #ef4444aa" }}>!</span>
+          </div>
+        )}
+
+        {tile.ownerId && (
+          <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundColor: owner?.color }} />
+        )}
+      </motion.button>
+
       <AnimatePresence>
         {hovered && tile.monsterType && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.92 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.92 }}
+            initial={{ opacity: 0, scale: 0.92, x: "-50%" }}
+            animate={{ opacity: 1, scale: 1, x: "-50%" }}
+            exit={{ opacity: 0, scale: 0.92, x: "-50%" }}
             transition={{ duration: 0.1 }}
             className="pointer-events-none z-[9999]"
             style={{
               position: "fixed",
-              top: tooltipPos.top,
+              top: tooltipPos.top - 12,
               left: tooltipPos.left,
-              transform: "translate(-50%, -100%)", // perfectly offsets the mouse cursor
-              minWidth: "88px",
+              minWidth: "100px",
+              translateY: "-100%", // Using translateY instead of transform string
             }}
           >
             <div
@@ -1298,21 +1485,7 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Liberated tile indicator: owned, no monster, not occupied */}
-      {tile.ownerId && !tile.monsterType && !tile.isOccupied && (
-        <div
-          className="absolute top-0 left-0 w-3.5 h-3.5 flex items-center justify-center rounded-br-sm pointer-events-none z-10"
-          style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
-        >
-          <span className="text-[8px] font-black leading-none" style={{ color: "#ef4444", textShadow: "0 0 4px #ef4444aa" }}>!</span>
-        </div>
-      )}
-
-      {tile.ownerId && (
-        <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundColor: owner?.color }} />
-      )}
-    </motion.button>
+    </>
   );
 }
 
@@ -1543,18 +1716,18 @@ function Rulebook({ onClose }: { onClose: () => void }) {
 
             <RuleSection title="🔄 Game Phases">
               <p className="mb-2">Each round alternates between two phases:</p>
-              <RuleRow label="Preparation">Players take turns selecting one action from the shared Action Spaces. Click <em>Finish Prep</em> when done with all desired actions for the round.</RuleRow>
+              <RuleRow label="Preparation">Players take turns selecting one action from the shared Action Spaces. Click <em>Finish Prep</em> when done. You can use <em>Undo Finish Prep</em> to jump back in if it's still your turn.</RuleRow>
               <RuleRow label="Attack">Players take turns using heroes or mana to attack monsters or enemy tiles. Click <em>Confirm Turn</em> when finished.</RuleRow>
-              <p className="mt-2 text-white/50 text-[11px]">Resources on unclaimed action spaces accumulate each round they go uncollected — a deliberate tempo trap.</p>
+              <p className="mt-2 text-white/50 text-[11px]">Resources on unclaimed action spaces stack each round. Note: Collecting an accumulated space resets its internal value to zero for the next round (so it starts at its base amount next turn).</p>
             </RuleSection>
 
             <RuleSection title="💰 Resources">
-              <RuleRow label="Gemstones 💎">Main currency. Earned as tile-scaled income each round. Used to pay for all action spaces.</RuleRow>
+              <RuleRow label="Gemstones 💎">Main currency. Earned as tile-scaled income each round. Projected income is shown as a <span className="text-red-400">+X next</span> badge.</RuleRow>
               <RuleRow label="Mana ⚡">Used for repeated summons, mana attacks, and capturing enemy tiles. Generated via Mana action spaces (2 Gems → 1 Mana).</RuleRow>
               <RuleRow label="Wood 🌲">Required: Walls (2W), Barracks (6W + 2C), and Bidding War entry (3W).</RuleRow>
               <RuleRow label="Clay">Required: Barracks (2C), Smithy (1C + 2S).</RuleRow>
               <RuleRow label="Stone ⛰">Required: Smithy (2S), Bidding War entry (1S).</RuleRow>
-              <RuleRow label="Income scale">3–5 tiles: ×4 Gems · 6–10: ×3 · 11–17: ×2 · 18+: ×1 Gem per tile</RuleRow>
+              <RuleRow label="Income scale">3–5 tiles: ×4 Gems · 6–10: ×3 · 11–17: ×2 · 18+: ×1 Gem per tile. Check player tooltips for projected totals.</RuleRow>
             </RuleSection>
 
             <RuleSection title="🎯 Action Spaces (Preparation)">
@@ -1568,6 +1741,7 @@ function Rulebook({ onClose }: { onClose: () => void }) {
               <RuleRow label="Summon Hero">8 Gems + N Mana (N = summons done this round) → pull a hero from Drafted Hand. Your very first ever summon bypasses both the Mana cost and Barracks requirement.</RuleRow>
               <RuleRow label="Build Smithy">10 Gems + 1 Clay + 2 Stone → unlocks Create Gear action</RuleRow>
               <RuleRow label="Create Gear">8 Gems + owned Smithy → equip a Gear card from Drafted Hand</RuleRow>
+              <RuleRow label="Secondary Actions">In 3+ player games, extra slots for Summon, Gear, and Resources appear to prevent bottlenecks.</RuleRow>
               <RuleRow label="Build Flagpole">Free — only unlocked once centre tile (40) is cleared. Triggers the Bidding War immediately.</RuleRow>
             </RuleSection>
 
@@ -1583,6 +1757,7 @@ function Rulebook({ onClose }: { onClose: () => void }) {
             <RuleSection title="🦸 Heroes">
               <RuleRow label="Summoning">Use Summon Hero action. Your first-ever summon is free of Barracks & Mana requirements. Each additional summon this round costs +1 Mana.</RuleRow>
               <RuleRow label="Using in battle">During Attack phase: select a Ready hero from Active Heroes, then click a target tile.</RuleRow>
+              <RuleRow label="Refreshing">Certain cards (Vera, Medkit) can refresh a Spent hero’s ability. Select the refresher card first, then click the Spent hero.</RuleRow>
               <RuleRow label="Ready / Spent">A green Ready badge means the hero can attack. Red Spent means they've already acted this round. Abilities reset at start of each Preparation phase.</RuleRow>
               <RuleRow label="Occupy ability">Heroes with "Occupy" in their ability text can hold tiles, preventing monster reclamation at round end.</RuleRow>
               <RuleRow label="Levelling">Drafting the same hero name a second time upgrades their existing card to Level 2, boosting their damage or effect.</RuleRow>
@@ -1639,6 +1814,7 @@ function Rulebook({ onClose }: { onClose: () => void }) {
               <p>• Hidden Cache (15 Gems) can swing a Bidding War. Hold it as a trump card and reveal it at the last moment.</p>
               <p>• Occupy-ability heroes lock tiles against monster reclamation — essential for holding deep, structureless territory.</p>
               <p>• Always keep 3 Wood and 1 Stone on hand. The Bidding War can trigger without warning.</p>
+              <p>• Drafting is universal — Heroes and Gear are pulled from the same pool. Balance your deck so you have enough muscle to expand and enough utility to maintain your lead.</p>
             </RuleSection>
 
           </div>
