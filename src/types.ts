@@ -57,6 +57,10 @@ export interface Tile {
   infected?: boolean;
   occupationTokenOwnerId?: string | null;  // Forced Occupation bonus card
   occupationTokenRoundsLeft?: number;      // Counts down each round
+  stunned?: boolean;                       // Mordecai: next attack deals +2 bonus damage
+  poisonRoundsLeft?: number;               // Poison Dagger: ticks of poison remaining
+  poisonOwnerId?: string | null;           // Player who applied poison
+  caltropsOwnerId?: string | null;         // Caltrops: monster reclaims at -2 HP
 }
 
 export interface Player {
@@ -88,6 +92,8 @@ export interface Player {
   earnedBonusThisAttack: boolean;          // Max 1 bonus card per attack phase
   monstersDefeatedThisAttack: number;      // Running count toward bonus trigger
   enemyCapturesThisAttack: number;         // Running count toward bonus trigger
+  linaBuff?: boolean;                      // Lina: next hero attack deals +1 damage
+  hornBuff?: boolean;                      // War Horn: all attacks this phase +1 damage
 }
 
 export interface GameState {

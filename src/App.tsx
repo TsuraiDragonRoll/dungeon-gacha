@@ -62,6 +62,9 @@ export default function App() {
   // Dual-target state for Hero of the Dungeon (hero_leg)
   const [dualTargets, setDualTargets] = useState<number[]>([]);
   const [dualHeroId, setDualHeroId] = useState<string | null>(null);
+  // Orion swap-target state
+  const [orionHeroId, setOrionHeroId] = useState<string | null>(null);
+  const [orionTargets, setOrionTargets] = useState<number[]>([]);
 
   useEffect(() => {
     // Capture socket ID as soon as it is available (may already be set on mount)
@@ -212,7 +215,36 @@ export default function App() {
         });
         return;
       }
+      // Orion swap-target mode
+      if (orionHeroId) {
+        const tile = gameState.board[tileId];
+        if (tile.monsterType === null) return;
+        const next = orionTargets.includes(tileId)
+          ? orionTargets.filter(t => t !== tileId)
+          : orionTargets.length >= 2 ? [orionTargets[1], tileId] : [...orionTargets, tileId];
+        setOrionTargets(next);
+        if (next.length === 2) {
+          socket.emit("use_hero_ability", { roomId, heroId: orionHeroId, tileId: next[0], tileId2: next[1] });
+          setOrionHeroId(null); setOrionTargets([]);
+        }
+        return;
+      }
       if (selectedCard) {
+        const baseId = selectedCard.replace(/_[0-9m]+$/, "");
+        // Tess: attack-phase hero ability needing a tile
+        if (selectedCard.startsWith("tess")) {
+          socket.emit("use_hero_ability", { roomId, heroId: selectedCard, tileId });
+          setSelectedCard(null);
+          return;
+        }
+        // Gear abilities that need a tile target in attack phase
+        const attackGearNeedingTile = ["g_wand","g_bribe","g_crossbow","g_bomb","g_knuckles","g_dagger","g_bait","g_caltrops"];
+        if (attackGearNeedingTile.some(g => baseId.startsWith(g))) {
+          socket.emit("use_gear_ability", { roomId, gearId: selectedCard, tileId });
+          setSelectedCard(null);
+          return;
+        }
+        // Default: hero attack
         socket.emit("attack_tile", { roomId, tileId, heroId: selectedCard });
         setSelectedCard(null);
       } else {
@@ -229,9 +261,23 @@ export default function App() {
         socket.emit("prep_action", { roomId, actionId: selectedAction, tileId });
         setSelectedAction(null);
       }
-    } else if (gameState.status === Phase.PREPARATION && selectedCard && selectedCard.startsWith("ewud")) {
-      socket.emit("use_hero_ability", { roomId, heroId: selectedCard, tileId });
-      setSelectedCard(null);
+    } else if (gameState.status === Phase.PREPARATION && selectedCard) {
+      const baseId = selectedCard.replace(/_[0-9m]+$/, "");
+      // Prep-phase hero abilities needing a tile
+      if (selectedCard.startsWith("ewud") || selectedCard.startsWith("boff")) {
+        socket.emit("use_hero_ability", { roomId, heroId: selectedCard, tileId });
+        setSelectedCard(null);
+      // Blueprints or Caltrops in prep phase
+      } else if (baseId.startsWith("g_blueprints")) {
+        const sType = window.confirm("Build a WALL? (Cancel = BARRACKS)") ? "WALL" : "BARRACKS";
+        socket.emit("use_gear_ability", { roomId, gearId: selectedCard, tileId, structureType: sType });
+        setSelectedCard(null);
+      } else if (baseId.startsWith("g_caltrops")) {
+        socket.emit("use_gear_ability", { roomId, gearId: selectedCard, tileId });
+        setSelectedCard(null);
+      } else {
+        setSelectedTile(tileId);
+      }
     } else {
       setSelectedTile(tileId);
     }
@@ -255,20 +301,68 @@ export default function App() {
     // Enter dual-target mode for Hero of the Dungeon
     if (isHeroDualCard(cardId)) {
       if (dualHeroId === cardId) {
-        // Toggle off
-        setDualHeroId(null);
-        setDualTargets([]);
+        setDualHeroId(null); setDualTargets([]);
       } else {
-        setDualHeroId(cardId);
-        setDualTargets([]);
-        setSelectedCard(null);
+        setDualHeroId(cardId); setDualTargets([]); setSelectedCard(null); setOrionHeroId(null); setOrionTargets([]);
       }
       return;
     }
-    // Clear dual mode when switching to another card
-    setDualHeroId(null);
-    setDualTargets([]);
-    // Toggle off or select
+    // Clear dual/orion modes when switching to another card
+    setDualHeroId(null); setDualTargets([]);
+
+    // ── Orion: enter swap-target mode ──────────────────────────────────────
+    if (cardId.startsWith("orion")) {
+      if (orionHeroId === cardId) { setOrionHeroId(null); setOrionTargets([]); }
+      else { setOrionHeroId(cardId); setOrionTargets([]); setSelectedCard(null); }
+      return;
+    }
+    setOrionHeroId(null); setOrionTargets([]);
+
+    // ── Lina: activate next-attack +1 damage buff immediately ──────────────
+    if (cardId.startsWith("lina")) {
+      socket.emit("use_hero_ability", { roomId, heroId: cardId });
+      return;
+    }
+
+    // ── Alcie: prompt for resource to convert ──────────────────────────────
+    if (cardId.startsWith("alcie")) {
+      const res = window.prompt("Enter resource to convert (wood / clay / stone / gemstones):", "wood");
+      if (res && ["wood","clay","stone","gemstones"].includes(res.trim().toLowerCase())) {
+        socket.emit("use_hero_ability", { roomId, heroId: cardId, fromResource: res.trim().toLowerCase() });
+      }
+      return;
+    }
+
+    // ── Tess: sets selected card — tile click will call use_hero_ability ───
+    if (cardId.startsWith("tess")) {
+      if (selectedCard === cardId) { setSelectedCard(null); } else { setSelectedCard(cardId); }
+      return;
+    }
+
+    // ── Boff: sets selected card — tile click in prep phase builds wall ────
+    if (cardId.startsWith("boff")) {
+      if (selectedCard === cardId) { setSelectedCard(null); } else { setSelectedCard(cardId); }
+      return;
+    }
+
+    // ── Gear abilities ──────────────────────────────────────────────────────
+    const baseGearId = cardId.replace(/_m?\d+$/, "");
+
+    // Immediate gear abilities (no tile needed)
+    const immediateGear = ["g_pick","g_trowel","g_lumberaxe","g_spyglass","g_horn"];
+    if (immediateGear.some(g => baseGearId === g)) {
+      socket.emit("use_gear_ability", { roomId, gearId: cardId });
+      return;
+    }
+
+    // Tile-targeted gear abilities (set selectedCard, handle in handleTileClick)
+    const tileTargetGear = ["g_wand","g_bribe","g_crossbow","g_bomb","g_knuckles","g_dagger","g_bait","g_caltrops","g_blueprints"];
+    if (tileTargetGear.some(g => baseGearId === g)) {
+      if (selectedCard === cardId) { setSelectedCard(null); } else { setSelectedCard(cardId); }
+      return;
+    }
+
+    // Toggle off or select for other cards (default behavior)
     if (selectedCard === cardId) {
       setSelectedCard(null);
     } else {
@@ -871,7 +965,7 @@ export default function App() {
                     <CardView
                       card={item}
                       onSelect={() => handleActiveCardClick(item.id)}
-                      active={selectedCard === item.id || dualHeroId === item.id}
+                      active={selectedCard === item.id || dualHeroId === item.id || orionHeroId === item.id}
                       disabled={!!item.abilityUsed}
                       spent={!!item.abilityUsed}
                     />
@@ -938,6 +1032,66 @@ export default function App() {
                 </p>
               </div>
             </div>
+          )}
+
+          {/* Orion Swap Banner (desktop) */}
+          {gameState.status === Phase.ATTACK && isMyTurn && orionHeroId && (
+            <div className="flex-1 min-w-[280px] flex flex-col gap-3 border-l border-white/5 pl-4">
+              <div className="p-3 bg-purple-500/10 border border-purple-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">🌠</span>
+                  <p className="text-[10px] text-purple-400 font-bold uppercase tracking-wider">
+                    Orion — Star Swap
+                  </p>
+                  <button
+                    onClick={() => { setOrionHeroId(null); setOrionTargets([]); }}
+                    className="ml-auto text-white/30 hover:text-white/60 text-[9px] uppercase font-bold shrink-0"
+                  >Cancel</button>
+                </div>
+                <p className="text-[10px] text-white/50">
+                  Click <span className="text-purple-400 font-bold">2 monster tiles</span> to swap their positions.
+                  {orionTargets.length > 0 && (
+                    <span className="block mt-1 text-purple-300 font-bold">{orionTargets.length}/2 selected</span>
+                  )}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Generic Tile-Targeting Banner (desktop) — for Tess, Boff, and tile-targeted gear */}
+          {isMyTurn && selectedCard && !selectedCard.startsWith("ewud") && !selectedCard.startsWith("vera") && !selectedCard.startsWith("g_medkit") && (
+            (() => {
+              const base = selectedCard.replace(/_m?\d+$/, "");
+              const tileTargetCards = ["tess","boff","g_wand","g_bribe","g_crossbow","g_bomb","g_knuckles","g_dagger","g_bait","g_caltrops","g_blueprints"];
+              const isTargeting = tileTargetCards.some(id => base.startsWith(id) || selectedCard.startsWith(id));
+              if (!isTargeting) return null;
+              const labels: Record<string, string> = {
+                tess: "Reveal monster HP in a 3x3 area — click center tile",
+                boff: "Repair a wall for 1 Wood — click an owned tile",
+                g_wand: "Deal 2 damage for 1 Mana — click a monster tile",
+                g_bribe: "Pay 5 gems to claim tile — click a monster tile",
+                g_crossbow: "Deal 3 damage (2-tile range) — click a monster tile",
+                g_bomb: "2 damage AOE — click target monster tile",
+                g_knuckles: "Deal 2 damage; +2 gems on kill — click a monster tile",
+                g_dagger: "Poison monster (1 dmg × 2 rounds) — click a monster tile",
+                g_bait: "Move monster to adjacent tile — click the monster tile",
+                g_caltrops: "Lay Caltrops — click an owned tile",
+                g_blueprints: "Free build (no action space) — click an owned tile",
+              };
+              const hint = Object.entries(labels).find(([k]) => base.startsWith(k) || selectedCard.startsWith(k))?.[1] ?? "Click a tile on the board";
+              return (
+                <div className="flex-1 min-w-[280px] flex flex-col gap-3 border-l border-white/5 pl-4">
+                  <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-lg">🎯</span>
+                      <p className="text-[10px] text-blue-400 font-bold uppercase tracking-wider">Select Target</p>
+                      <button onClick={() => setSelectedCard(null)} className="ml-auto text-white/30 hover:text-white/60 text-[9px] uppercase font-bold shrink-0">Cancel</button>
+                    </div>
+                    <p className="text-[10px] text-white/50">{hint}</p>
+                  </div>
+                </div>
+              );
+            })()
           )}
 
           {me && me.bonusCards && me.bonusCards.length > 0 && (
@@ -1091,7 +1245,7 @@ export default function App() {
                   {[...(me?.heroes || []), ...(me?.gear || [])].map(item => (
                     <div key={item.id} className="w-28 shrink-0">
                       <CardView card={item} onSelect={() => handleActiveCardClick(item.id)}
-                        active={selectedCard === item.id || dualHeroId === item.id}
+                        active={selectedCard === item.id || dualHeroId === item.id || orionHeroId === item.id}
                         disabled={!!item.abilityUsed}
                         spent={!!item.abilityUsed} />
                     </div>
@@ -1149,6 +1303,55 @@ export default function App() {
                   Select a clear tile you own on the board to build a Wooden Wall for free.
                 </p>
               </div>
+            )}
+
+            {/* Orion Swap Banner (mobile) */}
+            {gameState.status === Phase.ATTACK && isMyTurn && orionHeroId && (
+              <div className="mb-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-base">🌠</span>
+                  <p className="text-[10px] text-purple-400 font-bold uppercase tracking-wider flex-1">Orion — Star Swap</p>
+                  <button onClick={() => { setOrionHeroId(null); setOrionTargets([]); }} className="text-white/30 hover:text-white/60 text-[9px] uppercase font-bold">Cancel</button>
+                </div>
+                <p className="text-[10px] text-white/50">
+                  Select <span className="text-purple-400 font-bold">2 monster tiles</span> on the board to swap.
+                  {orionTargets.length > 0 && <span className="ml-1 text-purple-300 font-bold">{orionTargets.length}/2 selected</span>}
+                </p>
+              </div>
+            )}
+
+            {/* Generic tile-targeting banner (mobile) */}
+            {isMyTurn && selectedCard && !selectedCard.startsWith("ewud") && !selectedCard.startsWith("vera") && !selectedCard.startsWith("g_medkit") && (
+              (() => {
+                const base = selectedCard.replace(/_m?\d+$/, "");
+                const tileTargetCards = ["tess","boff","g_wand","g_bribe","g_crossbow","g_bomb","g_knuckles","g_dagger","g_bait","g_caltrops","g_blueprints"];
+                const isTargeting = tileTargetCards.some(id => base.startsWith(id) || selectedCard.startsWith(id));
+                if (!isTargeting) return null;
+                const labels: Record<string, string> = {
+                  tess: "Click center tile of 3x3 to reveal monster HP",
+                  boff: "Click an owned tile to repair a wall for 1 Wood",
+                  g_wand: "Click a monster tile — deal 2 dmg for 1 Mana",
+                  g_bribe: "Click a monster tile — pay 5 gems to claim it",
+                  g_crossbow: "Click a monster tile (2-tile range) — deal 3 dmg",
+                  g_bomb: "Click a monster tile — 2 dmg to it and neighbors",
+                  g_knuckles: "Click a monster tile — 2 dmg, +2 gems on kill",
+                  g_dagger: "Click a monster tile to poison it",
+                  g_bait: "Click a monster tile to bait it away",
+                  g_caltrops: "Click an owned tile to lay Caltrops",
+                  g_blueprints: "Click an owned tile to build (no action space)",
+                };
+                const hint = Object.entries(labels).find(([k]) => base.startsWith(k) || selectedCard.startsWith(k))?.[1] ?? "Click a tile";
+                return (
+                  <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-base">🎯</span>
+                      <p className="text-[10px] text-blue-400 font-bold uppercase tracking-wider flex-1">Select Target</p>
+                      <button onClick={() => setSelectedCard(null)} className="text-white/30 hover:text-white/60 text-[9px] uppercase font-bold">Cancel</button>
+                    </div>
+                    <p className="text-[10px] text-white/50">{hint}</p>
+                  </div>
+                );
+              })()
             )}
 
             {/* Mana Attack (Attack phase) */}
