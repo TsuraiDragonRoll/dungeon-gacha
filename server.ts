@@ -96,6 +96,11 @@ async function startServer() {
     return [];
   }
 
+  function saveCurrentTurnSnapshot(game: any) {
+    const { currentTurnSnapshot: _snap, ...rest } = game;
+    game.currentTurnSnapshot = JSON.parse(JSON.stringify(rest));
+  }
+
   function calculateIncome(tilesCount: number) {
     if (tilesCount >= 3 && tilesCount <= 5) return tilesCount * 4;
     if (tilesCount >= 6 && tilesCount <= 10) return tilesCount * 3;
@@ -147,6 +152,9 @@ async function startServer() {
             p.mana += 1;
           }
         });
+
+        // Save snapshot so the first attacker can restart their turn
+        saveCurrentTurnSnapshot(game);
       } else {
         game.currentPlayerIndex = nextIndex;
       }
@@ -302,6 +310,9 @@ async function startServer() {
         });
 
         game.logs.push(`Round ${game.round} begins. Preparation phase.`);
+      } else {
+        // Still in ATTACK phase — save snapshot for the next player's turn
+        saveCurrentTurnSnapshot(game);
       }
     }
   }
@@ -1229,10 +1240,10 @@ async function startServer() {
       if (game.players[game.currentPlayerIndex].id === socket.id) {
         advanceTurn(game);
       } else if (game.players.every((p: any) => p.finishedPrep)) {
-        // Even if it wasn't their turn, check if everyone is done
-        game.status = Phase.ATTACK;
-        game.currentPlayerIndex = 0;
-        game.logs.push("All players finished preparation. Attack phase begins!");
+        // Even if it wasn't their turn, check if everyone is done.
+        // Route through advanceTurn so monster reclamation, summonCountThisRound
+        // reset, and Mana Ring bonus all fire correctly.
+        advanceTurn(game);
       }
 
       io.to(roomId).emit("game_updated", game);
@@ -1757,7 +1768,7 @@ async function startServer() {
         return;
       }
 
-      const damage = manaToUse * 2;
+      const damage = manaToUse * 1;
       player.mana -= manaToUse;
       tile.monsterHP -= damage;
 
@@ -2431,6 +2442,26 @@ async function startServer() {
       advanceTurn(game);
       io.to(roomId).emit("game_updated", game);
       scheduleBot(game, roomId);
+    });
+
+    socket.on("restart_turn", (roomId) => {
+      const game = games.get(roomId);
+      if (!game || game.status !== Phase.ATTACK) return;
+
+      const player = game.players[game.currentPlayerIndex];
+      if (player.id !== socket.id) return;
+
+      const snapshot = game.currentTurnSnapshot;
+      if (!snapshot) return;
+
+      // Restore the full game state from the snapshot, but keep the snapshot
+      // itself so the player can restart again if needed
+      const restored = JSON.parse(JSON.stringify(snapshot));
+      restored.currentTurnSnapshot = snapshot;
+      games.set(roomId, restored);
+
+      restored.logs.push(`${player.name} restarted their turn.`);
+      io.to(roomId).emit("game_updated", restored);
     });
   });
 
