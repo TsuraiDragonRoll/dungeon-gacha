@@ -74,6 +74,7 @@ export default function App() {
 
     socket.on("game_updated", (state: GameState) => {
       setGameState(state);
+      if (socket.id) setMySocketId(socket.id);
     });
 
     // Server confirmed this socket as a reconnect of an existing player.
@@ -81,6 +82,7 @@ export default function App() {
     socket.on("rejoined", (state: GameState) => {
       setGameState(state);
       setJoined(true);
+      if (socket.id) setMySocketId(socket.id);
     });
 
     socket.on("kicked_from_lobby", () => {
@@ -95,6 +97,18 @@ export default function App() {
       socket.off("kicked_from_lobby");
     };
   }, []);
+
+  // Re-register with the server whenever the socket reconnects mid-game.
+  // Without this, the server retains the old socket ID and rejects attacks
+  // because player.id !== socket.id.
+  useEffect(() => {
+    if (!joined || !roomId || !playerName) return;
+    const handleReconnect = () => {
+      socket.emit("join_game", { roomId, playerName });
+    };
+    socket.on("connect", handleReconnect);
+    return () => { socket.off("connect", handleReconnect); };
+  }, [joined, roomId, playerName]);
 
   const prevTurnRef = useRef(false);
 
@@ -372,6 +386,10 @@ export default function App() {
 
   const handleEndTurn = () => {
     socket.emit("end_turn", roomId);
+  };
+
+  const handleRestartTurn = () => {
+    socket.emit("restart_turn", roomId);
   };
 
   const handleTrade = (from: string, to: string) => {
@@ -792,7 +810,7 @@ export default function App() {
                   disabled={!me || me.mana < 1}
                   className="w-full py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all"
                 >
-                  Attack ({manaAmount * 2} DMG)
+                  Attack ({manaAmount} DMG)
                 </button>
               </div>
             </div>
@@ -1367,7 +1385,7 @@ export default function App() {
                 <button onClick={() => { handleManaAttack(selectedTile, manaAmount); setManaAmount(1); }}
                   disabled={!me || me.mana < 1}
                   className="w-full py-2 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-lg text-[10px] font-bold uppercase">
-                  Attack ({manaAmount * 2} DMG)
+                  Attack ({manaAmount} DMG)
                 </button>
               </div>
             )}
@@ -1384,12 +1402,18 @@ export default function App() {
               </div>
             )}
 
-            {/* End Turn */}
+            {/* Turn Controls */}
             {isMyTurn && gameState.status === Phase.ATTACK && (
-              <button onClick={handleEndTurn}
-                className="w-full mt-4 py-3 bg-white text-black rounded-xl text-sm font-bold uppercase tracking-widest hover:bg-emerald-400 transition-colors">
-                End Turn →
-              </button>
+              <div className="mt-4 space-y-2">
+                <button onClick={handleRestartTurn}
+                  className="w-full py-2 bg-zinc-700 text-white rounded-xl text-sm font-bold uppercase tracking-widest hover:bg-amber-600 transition-colors">
+                  ↺ Restart Turn
+                </button>
+                <button onClick={handleEndTurn}
+                  className="w-full py-3 bg-white text-black rounded-xl text-sm font-bold uppercase tracking-widest hover:bg-emerald-400 transition-colors">
+                  End Turn →
+                </button>
+              </div>
             )}
           </motion.div>
         )}
