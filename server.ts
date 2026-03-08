@@ -582,13 +582,7 @@ async function startServer() {
             bot.tilesCount++;
             g.logs.push(`${bot.name} [BOT] captured tile ${target.id}!`);
 
-            // Bonus card check
-            bot.monstersDefeatedThisAttack = (bot.monstersDefeatedThisAttack || 0) + 1;
-            if (bot.monstersDefeatedThisAttack >= 3 && !bot.earnedBonusThisAttack && g.bonusDeck.length > 0) {
-              bot.earnedBonusThisAttack = true;
-              const bonus = g.bonusDeck.pop();
-              if (bonus) { bot.bonusCards.push(bonus); g.logs.push(`${bot.name} [BOT] earned bonus card: ${bonus.name}!`); }
-            }
+            // (Bonus cards are earned from enemy tile captures, not monster kills)
           }
         } else {
           // Enemy tile — simplified: instant capture attempt with damage resistance
@@ -1469,14 +1463,7 @@ async function startServer() {
             }
           });
 
-          // Bonus card: award after 3rd monster kill this attack phase
-          player.monstersDefeatedThisAttack++;
-          if (player.monstersDefeatedThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck && game.bonusDeck.length > 0) {
-            const bonusCard = game.bonusDeck.pop();
-            player.bonusCards.push(bonusCard);
-            player.earnedBonusThisAttack = true;
-            game.logs.push(`${player.name} earned a Bonus Card for liberating 3 monster tiles!`);
-          }
+          // (Bonus cards are earned from enemy tile captures, not monster kills)
         }
       } else if (tile.ownerId !== null) {
         // Player-owned tile combat (hero-damage system)
@@ -1675,13 +1662,7 @@ async function startServer() {
         player.tilesCount++;
         player.gemstones += 3;
         game.logs.push(`${player.name} claimed tile ${tileId1}!`);
-        player.monstersDefeatedThisAttack++;
-        if (player.monstersDefeatedThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck && game.bonusDeck.length > 0) {
-          const bonusCard = game.bonusDeck.pop();
-          player.bonusCards.push(bonusCard);
-          player.earnedBonusThisAttack = true;
-          game.logs.push(`${player.name} earned a Bonus Card for liberating 3 monster tiles!`);
-        }
+        // (Bonus cards are earned from enemy tile captures, not monster kills)
       }
 
       // Apply damage to tile 2
@@ -1696,13 +1677,7 @@ async function startServer() {
         player.tilesCount++;
         player.gemstones += 3;
         game.logs.push(`${player.name} claimed tile ${tileId2}!`);
-        player.monstersDefeatedThisAttack++;
-        if (player.monstersDefeatedThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck && game.bonusDeck.length > 0) {
-          const bonusCard = game.bonusDeck.pop();
-          player.bonusCards.push(bonusCard);
-          player.earnedBonusThisAttack = true;
-          game.logs.push(`${player.name} earned a Bonus Card for liberating 3 monster tiles!`);
-        }
+        // (Bonus cards are earned from enemy tile captures, not monster kills)
       }
 
       hero.abilityUsed = true;
@@ -1938,13 +1913,7 @@ async function startServer() {
         tamerTile.isOccupied = false;
         player.tilesCount++;
         player.gemstones += 3; // standard tile reward
-        player.monstersDefeatedThisAttack++;
-        if (player.monstersDefeatedThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck && game.bonusDeck.length > 0) {
-          const bonus = game.bonusDeck.pop();
-          player.bonusCards.push(bonus);
-          player.earnedBonusThisAttack = true;
-          game.logs.push(`${player.name} earned a Bonus Card for liberating 3 monster tiles!`);
-        }
+        // (Bonus cards are earned from enemy tile captures, not monster kills)
         player.bonusCards.splice(cardIdx, 1);
         game.logs.push(`${player.name} played Monster Tamer and instantly defeated the ${tamerMonsterName} on tile ${tileId}!`);
       }
