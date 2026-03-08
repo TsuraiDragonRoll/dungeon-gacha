@@ -2524,7 +2524,7 @@ function Rulebook({ onClose }: { onClose: () => void }) {
             </RuleSection>
 
             <RuleSection title="⭐ Bonus Cards">
-              <RuleRow label="Earning">Defeat your <strong className="text-white">3rd monster tile</strong> OR capture your <strong className="text-white">3rd enemy tile</strong> in one Attack phase. Maximum 1 Bonus Card earned per Attack phase.</RuleRow>
+              <RuleRow label="Earning">Capture your <strong className="text-white">3rd enemy tile</strong> in one Attack phase. Maximum 1 Bonus Card earned per Attack phase. Monster kills do <em>not</em> count toward this threshold — only seizing tiles that belonged to another player does.</RuleRow>
               <RuleRow label="Cost">Free — no Gems required to play.</RuleRow>
               <div className="mt-3 space-y-1">
                 <RuleRow label="Mercenary Contract">Prep. Summon 1 hero from your Drafted Hand for free (0 Gems, 0 Mana), ignoring Barracks limit. Select the hero card first.</RuleRow>
@@ -2561,7 +2561,7 @@ function Rulebook({ onClose }: { onClose: () => void }) {
               <p>• Build a Barracks early — after your first free summon you cannot recruit more heroes without Barracks capacity.</p>
               <p>• Unclaimed action spaces stack resources. Let opponents bleed Gems taking spaces early; collect a fat Wood stack later for free.</p>
               <p>• Mana is the scarcest resource. Save it for fortified enemy tiles or sequential hero summons, not routine monster clearing.</p>
-              <p>• Aggressively clear 3 monsters per Attack phase to farm Bonus Cards — they are some of the strongest plays in the game.</p>
+              <p>• Aggressively raid enemy territories — capturing 3 opponent tiles in one Attack phase earns you a Bonus Card, some of the strongest plays in the game.</p>
               <p>• Hidden Cache (15 Gems) can swing a Bidding War. Hold it as a trump card and reveal it at the last moment.</p>
               <p>• Occupy-ability heroes lock tiles against monster reclamation — essential for holding deep, structureless territory.</p>
               <p>• Always keep 3 Wood and 1 Stone on hand. The Bidding War can trigger without warning.</p>
