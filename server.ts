@@ -96,6 +96,20 @@ async function startServer() {
     return [];
   }
 
+  /**
+   * Award one bonus card to a player and emit a private notification to their socket.
+   * Call this instead of manually doing bonusDeck.pop() + bonusCards.push() inline.
+   */
+  function awardBonusCard(game: any, player: any, targetSocketId: string, reason: string) {
+    if (!game.bonusDeck || game.bonusDeck.length === 0) return;
+    const bonusCard = game.bonusDeck.pop();
+    player.bonusCards.push(bonusCard);
+    player.earnedBonusThisAttack = true;
+    game.logs.push(`${player.name} earned a Bonus Card: ${reason}`);
+    // Private notification — only the earning player sees the reveal modal
+    io.to(targetSocketId).emit("bonus_card_earned", bonusCard);
+  }
+
   function saveCurrentTurnSnapshot(game: any) {
     const { currentTurnSnapshot: _snap, ...rest } = game;
     game.currentTurnSnapshot = JSON.parse(JSON.stringify(rest));
@@ -130,19 +144,50 @@ async function startServer() {
 
         // Monster reclamation logic
         game.board.forEach((tile: any) => {
-          if (!tile.isOccupied && tile.ownerId !== null) {
-            const player = game.players.find((p: any) => p.id === tile.ownerId);
-            if (player) player.tilesCount--;
-
+          if (tile.ownerId !== null) {
+            // Dragon / Demon King tiles can reclaim even occupied tiles
+            // (unless a Tower Shield is protecting the occupying hero)
             const monster = getMonsterForTile(tile.id);
-            const hasCaltrops = !!tile.caltropsOwnerId;
-            tile.ownerId = null;
-            tile.structure = null;
-            tile.caltropsOwnerId = null;
-            tile.monsterType = monster.type;
-            tile.monsterHP = hasCaltrops ? Math.max(1, monster.hp - 2) : monster.hp;
-            tile.monsterMaxHP = monster.hp;
-            game.logs.push(`Monster reclaimed tile ${tile.id}!${hasCaltrops ? " (Weakened by Caltrops!)" : ""}`);
+            const isDragonOrDemonKing =
+              monster.type === MonsterType.DRAGON || monster.type === MonsterType.DEMON_KING;
+
+            const isProtectedByShield = (() => {
+              if (!tile.occupiedByHeroId) return false;
+              const tileOwner = game.players.find((p: any) => p.id === tile.ownerId);
+              return tileOwner?.gear?.some((g: any) => g.id === "g_shield") ?? false;
+            })();
+
+            // Normally, only unoccupied tiles get reclaimed.
+            // Dragon/Demon tiles also reclaim occupied tiles unless Tower Shield is present.
+            const willReclaim = !tile.isOccupied || (isDragonOrDemonKing && !isProtectedByShield);
+
+            if (willReclaim) {
+              const player = game.players.find((p: any) => p.id === tile.ownerId);
+              if (player) player.tilesCount--;
+
+              const hasCaltrops = !!tile.caltropsOwnerId;
+              // Pip trap: set via pipOwnerId when Pip hero deploys her trap on this tile
+              const hasPip = !!tile.pipOwnerId;
+
+              // Dragon/Demon King gives advance warning when evicting an occupied tile
+              if (isDragonOrDemonKing && tile.isOccupied) {
+                game.logs.push(`${monster.type} force-reclaimed tile ${tile.id} \u2014 driving out the occupying hero!`);
+              }
+              tile.ownerId = null;
+              tile.structure = null;
+              tile.caltropsOwnerId = null;
+              tile.pipOwnerId = null;
+              tile.occupiedByHeroId = null;
+              tile.isOccupied = false;
+              tile.monsterType = monster.type;
+              const penalty = (hasCaltrops ? 2 : 0) + (hasPip ? 3 : 0);
+              tile.monsterHP = penalty > 0 ? Math.max(1, monster.hp - penalty) : monster.hp;
+              tile.monsterMaxHP = monster.hp;
+              const trapNotes = [];
+              if (hasCaltrops) trapNotes.push("Weakened by Caltrops!");
+              if (hasPip) trapNotes.push("Pip slowed the monster! (-3 HP)");
+              game.logs.push(`Monster reclaimed tile ${tile.id}!${trapNotes.length ? " (" + trapNotes.join(" ") + ")" : ""}`);
+            }
           }
         });
 
@@ -713,6 +758,7 @@ async function startServer() {
               if (tile.caltropsOwnerId === oldId) tile.caltropsOwnerId = socket.id;
               if (tile.poisonOwnerId === oldId) tile.poisonOwnerId = socket.id;
               if (tile.occupationTokenOwnerId === oldId) tile.occupationTokenOwnerId = socket.id;
+              if (tile.pipOwnerId === oldId) tile.pipOwnerId = socket.id;
               // occupiedByHeroId is a hero ID string (not a socket ID) — no update needed
             });
 
@@ -1378,7 +1424,7 @@ async function startServer() {
           centerTile.ownerId = winner.id;
           centerTile.structure = StructureType.FLAGPOLE;
           game.logs.push(`BIDDING WAR OVER! ${winner.name} won the bid with a value of ${winner.bidAmount} and planted the Flagpole!`);
-          game.logs.push(`${winner.name} is the Dungeon Gacha champion!`);
+          game.logs.push(`${winner.name} is the Hero of the Dungeon champion!`);
         }
       }
 
@@ -1414,6 +1460,29 @@ async function startServer() {
           return;
         }
 
+        // Pip: set a trap without occupying (tile stays liberated; monster reclaims at -3 HP)
+        if (hero.id.startsWith("pip")) {
+          // Adjacency to an occupied tile required
+          const oNbrsPip = (() => {
+            const ox = tileId % 9, oy = Math.floor(tileId / 9), ons: number[] = [];
+            if (ox > 0) ons.push(tileId - 1); if (ox < 8) ons.push(tileId + 1);
+            if (oy > 0) ons.push(tileId - 9); if (oy < 8) ons.push(tileId + 9);
+            return ons;
+          })();
+          const adjOccupiedPip = oNbrsPip.some(n => game.board[n]?.isOccupied && game.board[n]?.ownerId === player.id);
+          if (!adjOccupiedPip) {
+            game.logs.push(`${player.name}: Pip must be placed adjacent to a fortified or hero-occupied tile.`);
+            io.to(roomId).emit("game_updated", game);
+            return;
+          }
+          tile.pipOwnerId = player.id;
+          // Tile stays NOT isOccupied — remains liberated so the red ! shows
+          hero.abilityUsed = true;
+          logTurn(game, `${player.name}'s Pip set a trap on tile ${tileId}. Any monster that reclaims it starts at −3 HP!`);
+          io.to(roomId).emit("game_updated", game);
+          return;
+        }
+
         // Occupy if not used and hero has ability
         if (!hero.abilityUsed && hero.ability.toLowerCase().includes("occupy")) {
           // Plated Boots required to occupy a Moat tile
@@ -1426,6 +1495,20 @@ async function startServer() {
             }
           }
 
+          // Adjacency requirement: target tile must be orthogonally adjacent to an already-occupied tile
+          const oNbrs = (() => {
+            const ox = tileId % 9, oy = Math.floor(tileId / 9), ons: number[] = [];
+            if (ox > 0) ons.push(tileId - 1); if (ox < 8) ons.push(tileId + 1);
+            if (oy > 0) ons.push(tileId - 9); if (oy < 8) ons.push(tileId + 9);
+            return ons;
+          })();
+          const adjOccupied = oNbrs.some(n => game.board[n]?.isOccupied && game.board[n]?.ownerId === player.id);
+          if (!adjOccupied) {
+            game.logs.push(`${player.name}: You can only occupy a tile adjacent to an already-occupied tile (structure or hero).`);
+            io.to(roomId).emit("game_updated", game);
+            return;
+          }
+
           // If already occupied by another hero, free that hero first
           if (tile.occupiedByHeroId) {
             const otherHero = player.heroes.find((h: any) => h.id === tile.occupiedByHeroId);
@@ -1436,6 +1519,7 @@ async function startServer() {
           tile.occupiedByHeroId = heroId;
           hero.abilityUsed = true;
           logTurn(game, `${player.name}'s ${hero.name} occupied tile ${tileId}.`);
+
           io.to(roomId).emit("game_updated", game);
         }
         return;
@@ -1548,7 +1632,11 @@ async function startServer() {
             }
           });
 
-          // (Bonus cards are earned from enemy tile captures, not monster kills)
+          // Bonus card: 5 monster kills
+          player.monstersDefeatedThisAttack = (player.monstersDefeatedThisAttack || 0) + 1;
+          if (player.monstersDefeatedThisAttack >= 5 && !player.earnedBonusThisAttack) {
+            awardBonusCard(game, player, socket.id, "defeating 5 monsters!");
+          }
         }
       } else if (tile.ownerId !== null) {
         // Player-owned tile combat (hero-damage system)
@@ -1661,12 +1749,9 @@ async function startServer() {
         game.logs.push(`${player.name} captured ${oldOwner?.name}'s tile ${tileId}!`);
 
         // Bonus card: award after 3rd enemy tile capture this attack phase
-        player.enemyCapturesThisAttack++;
-        if (player.enemyCapturesThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck && game.bonusDeck.length > 0) {
-          const bonusCard = game.bonusDeck.pop();
-          player.bonusCards.push(bonusCard);
-          player.earnedBonusThisAttack = true;
-          game.logs.push(`${player.name} earned a Bonus Card for capturing 3 enemy tiles!`);
+        player.enemyCapturesThisAttack = (player.enemyCapturesThisAttack || 0) + 1;
+        if (player.enemyCapturesThisAttack >= 3 && !player.earnedBonusThisAttack) {
+          awardBonusCard(game, player, socket.id, "capturing 3 enemy tiles!");
         }
       }
 
@@ -1747,7 +1832,10 @@ async function startServer() {
         player.tilesCount++;
         player.gemstones += 3;
         game.logs.push(`${player.name} claimed tile ${tileId1}!`);
-        // (Bonus cards are earned from enemy tile captures, not monster kills)
+        player.monstersDefeatedThisAttack = (player.monstersDefeatedThisAttack || 0) + 1;
+        if (player.monstersDefeatedThisAttack >= 5 && !player.earnedBonusThisAttack) {
+          awardBonusCard(game, player, socket.id, "defeating 5 monsters!");
+        }
       }
 
       // Apply damage to tile 2
@@ -1762,7 +1850,10 @@ async function startServer() {
         player.tilesCount++;
         player.gemstones += 3;
         game.logs.push(`${player.name} claimed tile ${tileId2}!`);
-        // (Bonus cards are earned from enemy tile captures, not monster kills)
+        player.monstersDefeatedThisAttack = (player.monstersDefeatedThisAttack || 0) + 1;
+        if (player.monstersDefeatedThisAttack >= 5 && !player.earnedBonusThisAttack) {
+          awardBonusCard(game, player, socket.id, "defeating 5 monsters!");
+        }
       }
 
       hero.abilityUsed = true;
@@ -1863,6 +1954,10 @@ async function startServer() {
         player.tilesCount++;
         player.gemstones += 3;
         game.logs.push(`${player.name} defeated the monster and captured tile ${tileId}!`);
+        player.monstersDefeatedThisAttack = (player.monstersDefeatedThisAttack || 0) + 1;
+        if (player.monstersDefeatedThisAttack >= 5 && !player.earnedBonusThisAttack) {
+          awardBonusCard(game, player, socket.id, "defeating 5 monsters!");
+        }
       }
 
       io.to(roomId).emit("game_updated", game);
@@ -1942,11 +2037,9 @@ async function startServer() {
         player.bonusCards.splice(cardIdx, 1);
       }
 
-      // ── Reinforced Caravan (prep phase, free) ───────────────────────────────
+      // ── Reinforced Caravan (instant: usable any phase) ───────────────────────────────────
       else if (baseId === "bc_caravan") {
-        if (game.status !== Phase.PREPARATION) {
-          game.logs.push("Reinforced Caravan can only be used in the Preparation phase."); return;
-        }
+        // Removed: if (game.status !== Phase.PREPARATION) { game.logs.push("Reinforced Caravan can only be used in the Preparation phase."); return; }
         player.wood += 4;
         player.clay += 2;
         player.stone += 1;
@@ -1954,11 +2047,8 @@ async function startServer() {
         logTurn(game, `${player.name} played Reinforced Caravan and gained 4 Wood, 2 Clay, and 1 Stone!`);
       }
 
-      // ── Hidden Cache (prep phase, free) ─────────────────────────────────────
+      // ── Hidden Cache (instant: usable any phase) ────────────────────────────────────
       else if (baseId === "bc_cache") {
-        if (game.status !== Phase.PREPARATION) {
-          game.logs.push("Hidden Cache can only be used in the Preparation phase."); return;
-        }
         player.gemstones += 15;
         player.bonusCards.splice(cardIdx, 1);
         logTurn(game, `${player.name} played Hidden Cache and gained 15 Gemstones!`);
@@ -2177,7 +2267,7 @@ async function startServer() {
         logTurn(game, `${player.name}'s Boff repaired a Wall on tile ${tileId} for 1 Wood!`);
       }
 
-      // Tess: reveal (log) the health of all monsters in a 3x3 area (Attack phase)
+      // Tess: deal 1 damage to every monster in a 3x3 area (Attack phase)
       else if (hero.id.startsWith("tess")) {
         if (game.status !== Phase.ATTACK) {
           game.logs.push(`${hero.name}'s ability can only be used in the Attack phase.`);
@@ -2188,26 +2278,145 @@ async function startServer() {
           game.logs.push("It is not your turn."); io.to(roomId).emit("game_updated", game); return;
         }
         if (tileId === undefined || tileId === null) {
-          game.logs.push("Select a center tile for the 3x3 reveal."); io.to(roomId).emit("game_updated", game); return;
+          game.logs.push("Select a center tile for the 3x3 area strike."); io.to(roomId).emit("game_updated", game); return;
         }
         const cx = tileId % 9, cy = Math.floor(tileId / 9);
-        const revealed: string[] = [];
+        let tessHits = 0;
         for (let dy = -1; dy <= 1; dy++) {
           for (let dx = -1; dx <= 1; dx++) {
             const nx = cx + dx, ny = cy + dy;
             if (nx < 0 || nx > 8 || ny < 0 || ny > 8) continue;
             const nt = game.board[ny * 9 + nx];
             if (nt.monsterType !== null) {
-              revealed.push(`Tile ${nt.id}: ${nt.monsterType} (${nt.monsterHP}/${nt.monsterMaxHP} HP)`);
+              nt.monsterHP -= 1;
+              tessHits++;
+              game.logs.push(`Tess hit the ${nt.monsterType} on tile ${nt.id} for 1 damage! (${Math.max(0, nt.monsterHP)} HP left)`);
+              if (nt.monsterHP <= 0) {
+                const tessMonster = nt.monsterType;
+                nt.monsterType = null; nt.monsterHP = 0; nt.monsterMaxHP = 0;
+                nt.ownerId = player.id; nt.isOccupied = false;
+                player.tilesCount++; player.gemstones += 3;
+                player.monstersDefeatedThisAttack = (player.monstersDefeatedThisAttack || 0) + 1;
+                if (player.monstersDefeatedThisAttack >= 5 && !player.earnedBonusThisAttack) {
+                  awardBonusCard(game, player, socket.id, "defeating 5 monsters!");
+                }
+                game.logs.push(`${player.name}'s Tess finished off the ${tessMonster} on tile ${nt.id}!`);
+              }
             }
           }
         }
         hero.abilityUsed = true;
-        if (revealed.length === 0) {
-          logTurn(game, `${player.name}'s Tess scouted the 3x3 area — no monsters found.`);
+        if (tessHits === 0) {
+          logTurn(game, `${player.name}'s Tess found no monsters in the 3x3 area.`);
         } else {
-          logTurn(game, `${player.name}'s Tess revealed: ${revealed.join(", ")}`);
+          logTurn(game, `${player.name}'s Tess struck ${tessHits} monster${tessHits > 1 ? 's' : ''} in the 3x3 area for 1 damage each!`);
         }
+      }
+
+      // Seraphina: spend 1 mana to occupy up to 2 monster-cleared squares adjacent to your territory
+      else if (hero.id.startsWith("seraphina")) {
+        if (game.status !== Phase.ATTACK) {
+          game.logs.push(`${hero.name}'s ability can only be used in the Attack phase.`);
+          io.to(roomId).emit("game_updated", game);
+          return;
+        }
+        if (game.players[game.currentPlayerIndex].id !== player.id) {
+          game.logs.push("It is not your turn."); io.to(roomId).emit("game_updated", game); return;
+        }
+        if (player.mana < 1) {
+          game.logs.push(`${player.name} needs 1 Mana for Seraphina's ability!`); io.to(roomId).emit("game_updated", game); return;
+        }
+        // tileId = first target, tileId2 = optional second target
+        const seraTargets: number[] = [];
+        if (tileId !== undefined && tileId !== null) seraTargets.push(tileId);
+        if (tileId2 !== undefined && tileId2 !== null && tileId2 !== tileId) seraTargets.push(tileId2);
+        if (seraTargets.length === 0) {
+          game.logs.push("Select 1 or 2 cleared tiles adjacent to your territory for Seraphina."); io.to(roomId).emit("game_updated", game); return;
+        }
+        // Validate each target
+        const seraNbrs = (tid: number) => {
+          const sx = tid % 9, sy = Math.floor(tid / 9), sns: number[] = [];
+          if (sx > 0) sns.push(tid - 1); if (sx < 8) sns.push(tid + 1);
+          if (sy > 0) sns.push(tid - 9); if (sy < 8) sns.push(tid + 9);
+          return sns;
+        };
+        for (const tid of seraTargets) {
+          const st = game.board[tid];
+          if (!st || st.monsterType !== null || st.ownerId !== null) {
+            game.logs.push(`Tile ${tid} must be a cleared, unowned square for Seraphina.`); io.to(roomId).emit("game_updated", game); return;
+          }
+          if (!seraNbrs(tid).some(n => game.board[n]?.ownerId === player.id)) {
+            game.logs.push(`Tile ${tid} must be adjacent to your territory.`); io.to(roomId).emit("game_updated", game); return;
+          }
+          // Occupy adjacency: must be next to an already-occupied tile
+          if (!seraNbrs(tid).some(n => game.board[n]?.isOccupied && game.board[n]?.ownerId === player.id)) {
+            game.logs.push(`Tile ${tid} must be adjacent to an already-occupied tile (structure or hero). Seraphina cannot reach open territory.`); io.to(roomId).emit("game_updated", game); return;
+          }
+        }
+        player.mana -= 1;
+        seraTargets.forEach(tid => {
+          const st = game.board[tid];
+          st.ownerId = player.id;
+          st.isOccupied = false;
+          player.tilesCount++;
+        });
+        hero.abilityUsed = true;
+        logTurn(game, `${player.name}'s Seraphina descended and claimed tile${seraTargets.length > 1 ? 's' : ''} ${seraTargets.join(" and ")} for 1 Mana!`);
+      }
+
+      // Goliath: occupy up to 3 cleared squares orthogonally adjacent to your territory
+      else if (hero.id.startsWith("goliath")) {
+        if (game.status !== Phase.ATTACK) {
+          game.logs.push(`${hero.name}'s ability can only be used in the Attack phase.`);
+          io.to(roomId).emit("game_updated", game);
+          return;
+        }
+        if (game.players[game.currentPlayerIndex].id !== player.id) {
+          game.logs.push("It is not your turn."); io.to(roomId).emit("game_updated", game); return;
+        }
+        // Collect up to 3 targets from tileId, tileId2, and tileId (used as 3rd via extra occupyTargets field)
+        // Server receives tileId and tileId2 from client; for Goliath 3 tiles, the client sends an array
+        // encoded as tileId (1st), tileId2 (2nd), and fromResource reused as the 3rd tile index string
+        const golTargets: number[] = [];
+        if (tileId !== undefined && tileId !== null) golTargets.push(tileId);
+        if (tileId2 !== undefined && tileId2 !== null && tileId2 !== tileId) golTargets.push(tileId2);
+        // 3rd tile optionally encoded in fromResource field as a number string
+        if (fromResource !== undefined && fromResource !== null && !isNaN(Number(fromResource)) && Number(fromResource) !== tileId && Number(fromResource) !== tileId2) {
+          golTargets.push(Number(fromResource));
+        }
+        if (golTargets.length === 0) {
+          game.logs.push("Select 1–3 cleared tiles adjacent to your territory for Goliath."); io.to(roomId).emit("game_updated", game); return;
+        }
+        const golNbrs = (tid: number) => {
+          const gx = tid % 9, gy = Math.floor(tid / 9), gns: number[] = [];
+          if (gx > 0) gns.push(tid - 1); if (gx < 8) gns.push(tid + 1);
+          if (gy > 0) gns.push(tid - 9); if (gy < 8) gns.push(tid + 9);
+          return gns;
+        };
+        for (const tid of golTargets) {
+          const gt = game.board[tid];
+          if (!gt || gt.monsterType !== null || gt.ownerId !== null) {
+            game.logs.push(`Tile ${tid} must be a cleared, unowned square for Goliath.`); io.to(roomId).emit("game_updated", game); return;
+          }
+          if (!golNbrs(tid).some(n => game.board[n]?.ownerId === player.id || golTargets.includes(n))) {
+            game.logs.push(`Tile ${tid} must be adjacent to your territory or another Goliath target.`); io.to(roomId).emit("game_updated", game); return;
+          }
+          // Occupy adjacency: first tile must be next to an already-occupied tile; extra tiles may chain
+          const alreadyOccupiedAdj = golNbrs(tid).some(n => game.board[n]?.isOccupied && game.board[n]?.ownerId === player.id);
+          const chainedToTarget = golNbrs(tid).some(n => golTargets.includes(n) && n !== tid);
+          if (!alreadyOccupiedAdj && !chainedToTarget) {
+            game.logs.push(`Tile ${tid} must be adjacent to an already-occupied tile or another selected tile. Goliath cannot march into open territory.`); io.to(roomId).emit("game_updated", game); return;
+          }
+        }
+        golTargets.forEach(tid => {
+          const gt = game.board[tid];
+          gt.ownerId = player.id;
+          gt.isOccupied = true;
+          gt.occupiedByHeroId = heroId;
+          player.tilesCount++;
+        });
+        hero.abilityUsed = true;
+        logTurn(game, `${player.name}'s Goliath occupied tile${golTargets.length > 1 ? 's' : ''} ${golTargets.join(", ")}!`);
       }
 
       io.to(roomId).emit("game_updated", game);
@@ -2266,16 +2475,12 @@ async function startServer() {
         logTurn(game, `${player.name} used Lumber Axe: spent 1 Mana, gained 3 Wood.`);
       }
 
-      // Spyglass: peek top 3 hero deck cards (logged)
+      // Spyglass: gain 3 Mana instantly (prep phase)
       else if (gear.id === "g_spyglass") {
         if (!isPrep) { game.logs.push("Spyglass can only be used in Preparation phase."); io.to(roomId).emit("game_updated", game); return; }
-        const top3 = game.heroDeck.slice(-3).reverse().map((c: any) => c.name);
+        player.mana += 3;
         gear.abilityUsed = true;
-        if (top3.length === 0) {
-          logTurn(game, `${player.name} used Spyglass — Hero Deck is empty!`);
-        } else {
-          logTurn(game, `${player.name} used Spyglass and saw the next ${top3.length} heroes: ${top3.join(", ")}.`);
-        }
+        logTurn(game, `${player.name} used Spyglass and gained 3 Mana!`);
       }
 
       // Blueprints: build a structure on an owned tile without using an action space
@@ -2494,28 +2699,27 @@ async function startServer() {
         logTurn(game, `${player.name} used Monster Bait to move the monster from tile ${tileId} to tile ${dest}!`);
       }
 
-      // Lance: deal 3 damage to a monster if a hero moved into (occupied) its tile this turn
+      // Lance: deal 4 damage to an adjacent monster tile
       else if (gear.id === "g_lance") {
         if (!isAttack) { game.logs.push("Lance can only be used in the Attack phase."); io.to(roomId).emit("game_updated", game); return; }
         if (!isMyTurn) { game.logs.push("It is not your turn."); io.to(roomId).emit("game_updated", game); return; }
-        if (tileId === undefined || tileId === null) { game.logs.push("Select the monster tile your hero just moved into."); io.to(roomId).emit("game_updated", game); return; }
+        if (tileId === undefined || tileId === null) { game.logs.push("Select an adjacent monster tile to lance."); io.to(roomId).emit("game_updated", game); return; }
         const lanceTile = game.board[tileId];
         if (!lanceTile || lanceTile.monsterType === null) { game.logs.push("Lance requires a monster tile."); io.to(roomId).emit("game_updated", game); return; }
-        // Tile must be adjacent to the player's territory (hero moving in)
+        // Must be directly adjacent (1 tile) to your territory
         const lAdj = nbrs(tileId).some(n => game.board[n].ownerId === player.id);
-        if (!lAdj) { game.logs.push("Target must be adjacent to your territory."); io.to(roomId).emit("game_updated", game); return; }
-        lanceTile.monsterHP -= 3;
+        if (!lAdj) { game.logs.push("Lance target must be directly adjacent to your territory."); io.to(roomId).emit("game_updated", game); return; }
+        lanceTile.monsterHP -= 4;
         gear.abilityUsed = true;
-        logTurn(game, `${player.name}'s Lance charged — 3 damage to the ${lanceTile.monsterType} on tile ${tileId}!`);
+        logTurn(game, `${player.name}'s Lance impaled the ${lanceTile.monsterType} on tile ${tileId} for 4 damage!`);
         if (lanceTile.monsterHP <= 0) {
           const lName = lanceTile.monsterType;
           lanceTile.monsterType = null; lanceTile.monsterHP = 0; lanceTile.monsterMaxHP = 0;
           lanceTile.ownerId = player.id; lanceTile.isOccupied = false;
           player.tilesCount++; player.gemstones += 3;
           player.monstersDefeatedThisAttack = (player.monstersDefeatedThisAttack || 0) + 1;
-          if (player.monstersDefeatedThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck?.length > 0) {
-            player.bonusCards.push(game.bonusDeck.pop()); player.earnedBonusThisAttack = true;
-            game.logs.push(`${player.name} earned a Bonus Card!`);
+          if (player.monstersDefeatedThisAttack >= 5 && !player.earnedBonusThisAttack) {
+            awardBonusCard(game, player, socket.id, "defeating 5 monsters!");
           }
           game.logs.push(`${player.name}'s Lance defeated the ${lName} and claimed tile ${tileId}!`);
         }
@@ -2567,9 +2771,10 @@ async function startServer() {
         // No abilityUsed flag — it's a passive perk, not a one-time use
       }
 
-      // Tower Shield: passive — protects occupying hero from Dragon/Demon effects. No active activation.
+      // Tower Shield: passive defense bonus — adds +4 defense HP to an occupied tile when it is first attacked.
+      // No active activation; the bonus is applied automatically in the attack_tile handler.
       else if (gear.id === "g_shield") {
-        logTurn(game, `${player.name}'s Tower Shield is equipped — the occupying hero is protected from Dragon/Demon effects.`);
+        logTurn(game, `${player.name}'s Tower Shield is equipped — any tile occupied by your hero gains +4 defense HP when attacked.`);
         // No abilityUsed flag — passive protection
       }
 
