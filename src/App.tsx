@@ -17,7 +17,9 @@ import {
   Waves,
   Trophy,
   ArrowRight,
-  Flag
+  Flag,
+  Layers,
+  Star
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -80,6 +82,14 @@ export default function App() {
   // Orion swap-target state
   const [orionHeroId, setOrionHeroId] = useState<string | null>(null);
   const [orionTargets, setOrionTargets] = useState<number[]>([]);
+  // Seraphina multi-occupy state (up to 2 cleared tiles)
+  const [seraHeroId, setSeraHeroId] = useState<string | null>(null);
+  const [seraTargets, setSeraTargets] = useState<number[]>([]);
+  // Goliath multi-occupy state (up to 3 cleared tiles)
+  const [goliathHeroId, setGoliathHeroId] = useState<string | null>(null);
+  const [goliathTargets, setGoliathTargets] = useState<number[]>([]);
+  // Bonus card reveal modal
+  const [pendingBonusCard, setPendingBonusCard] = useState<any>(null);
 
   useEffect(() => {
     // Capture socket ID as soon as it is available (may already be set on mount)
@@ -104,12 +114,18 @@ export default function App() {
       alert("You have been removed from the lobby by the host.");
       window.location.reload();
     });
+
+    socket.on("bonus_card_earned", (card: any) => {
+      setPendingBonusCard(card);
+    });
+
     return () => {
       socket.off("connect");
       socket.off("reconnect");
       socket.off("game_updated");
       socket.off("rejoined");
       socket.off("kicked_from_lobby");
+      socket.off("bonus_card_earned");
     };
   }, []);
 
@@ -258,6 +274,29 @@ export default function App() {
         }
         return;
       }
+      // Seraphina multi-occupy mode (up to 2 cleared tiles)
+      if (seraHeroId) {
+        const tile = gameState.board[tileId];
+        if (tile.monsterType !== null || tile.ownerId !== null) return; // must be cleared + unowned
+        const next = seraTargets.includes(tileId)
+          ? seraTargets.filter(t => t !== tileId)
+          : seraTargets.length >= 2 ? [seraTargets[1], tileId] : [...seraTargets, tileId];
+        setSeraTargets(next);
+        if (next.length === 2) {
+          socket.emit("use_hero_ability", { roomId, heroId: seraHeroId, tileId: next[0], tileId2: next[1] });
+          setSeraHeroId(null); setSeraTargets([]);
+        }
+        return;
+      }
+      // Goliath multi-occupy mode (up to 3 cleared tiles; confirm button fires it)
+      if (goliathHeroId) {
+        const tile = gameState.board[tileId];
+        if (tile.monsterType !== null || tile.ownerId !== null) return; // must be cleared + unowned
+        setGoliathTargets(prev =>
+          prev.includes(tileId) ? prev.filter(t => t !== tileId) : prev.length >= 3 ? [...prev.slice(1), tileId] : [...prev, tileId]
+        );
+        return;
+      }
       if (selectedCard) {
         const baseId = selectedCard.replace(/_[0-9m]+$/, "");
         // Tess: attack-phase hero ability needing a tile
@@ -332,20 +371,36 @@ export default function App() {
       if (dualHeroId === cardId) {
         setDualHeroId(null); setDualTargets([]);
       } else {
-        setDualHeroId(cardId); setDualTargets([]); setSelectedCard(null); setOrionHeroId(null); setOrionTargets([]);
+        setDualHeroId(cardId); setDualTargets([]); setSelectedCard(null); setOrionHeroId(null); setOrionTargets([]); setSeraHeroId(null); setSeraTargets([]); setGoliathHeroId(null); setGoliathTargets([]);
       }
       return;
     }
-    // Clear dual/orion modes when switching to another card
+    // Clear dual/orion/seraphina/goliath modes when switching to another card
     setDualHeroId(null); setDualTargets([]);
 
     // ── Orion: enter swap-target mode ──────────────────────────────────────
     if (cardId.startsWith("orion")) {
       if (orionHeroId === cardId) { setOrionHeroId(null); setOrionTargets([]); }
-      else { setOrionHeroId(cardId); setOrionTargets([]); setSelectedCard(null); }
+      else { setOrionHeroId(cardId); setOrionTargets([]); setSelectedCard(null); setSeraHeroId(null); setSeraTargets([]); setGoliathHeroId(null); setGoliathTargets([]); }
       return;
     }
     setOrionHeroId(null); setOrionTargets([]);
+
+    // ── Seraphina: enter 2-tile cleared-occupy mode ─────────────────────────
+    if (cardId.startsWith("seraphina")) {
+      if (seraHeroId === cardId) { setSeraHeroId(null); setSeraTargets([]); }
+      else { setSeraHeroId(cardId); setSeraTargets([]); setSelectedCard(null); setOrionHeroId(null); setOrionTargets([]); setGoliathHeroId(null); setGoliathTargets([]); }
+      return;
+    }
+    setSeraHeroId(null); setSeraTargets([]);
+
+    // ── Goliath: enter 3-tile cleared-occupy mode ───────────────────────────
+    if (cardId.startsWith("goliath")) {
+      if (goliathHeroId === cardId) { setGoliathHeroId(null); setGoliathTargets([]); }
+      else { setGoliathHeroId(cardId); setGoliathTargets([]); setSelectedCard(null); setOrionHeroId(null); setOrionTargets([]); setSeraHeroId(null); setSeraTargets([]); }
+      return;
+    }
+    setGoliathHeroId(null); setGoliathTargets([]);
 
     // ── Lina: activate next-attack +1 damage buff immediately ──────────────
     if (cardId.startsWith("lina")) {
@@ -477,7 +532,7 @@ export default function App() {
         >
           <div className="flex items-center gap-3 mb-8">
             <Castle className="w-10 h-10 text-emerald-500" />
-            <h1 className="text-3xl font-bold tracking-tight uppercase">Dungeon Gacha</h1>
+            <h1 className="text-3xl font-bold tracking-tight uppercase">Hero of the Dungeon</h1>
           </div>
           <div className="space-y-6">
             <div>
@@ -528,6 +583,14 @@ export default function App() {
   const me = gameState.players.find(p => p.id === mySocketId);
   const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === mySocketId;
 
+  const handleBonusCardRevealAction = (action: "use" | "hand") => {
+    if (!pendingBonusCard) return;
+    if (action === "use") {
+      socket.emit("use_bonus_card", { roomId, cardId: pendingBonusCard.id });
+    }
+    setPendingBonusCard(null);
+  };
+
   return (
     <div className="h-screen bg-[#0a0502] text-white flex flex-row font-sans selection:bg-emerald-500/30 overflow-hidden">      {/* Sidebar: Stats & Logs — desktop only */}
       <div className="hidden md:flex w-56 xl:w-64 bg-[#151619] border-r border-white/5 flex-col h-full shrink-0">
@@ -539,8 +602,8 @@ export default function App() {
 
           {me && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-2">
-                <div className="relative">
+              <div className="grid grid-cols-3 gap-1.5">
+                <div className="relative col-span-1">
                   <StatCard icon={<Gem className="w-4 h-4 text-red-500" />} label="Gems" value={me.gemstones} />
                   <div className="absolute -top-1 -right-1 bg-red-500/20 border border-red-500/30 px-1 rounded text-[8px] font-bold text-red-400">
                     +{getNextIncomeValue(me)} next
@@ -548,6 +611,7 @@ export default function App() {
                 </div>
                 <StatCard icon={<Zap className="w-4 h-4 text-blue-400" />} label="Mana" value={me.mana} />
                 <StatCard icon={<Trees className="w-4 h-4 text-amber-600" />} label="Wood" value={me.wood} />
+                <StatCard icon={<Layers className="w-4 h-4 text-orange-400" />} label="Clay" value={me.clay} />
                 <StatCard icon={<Mountain className="w-4 h-4 text-stone-400" />} label="Stone" value={me.stone} />
               </div>
             </div>
@@ -819,9 +883,9 @@ export default function App() {
                     tile={tile}
                     players={gameState.players}
                     onClick={() => handleTileClick(i)}
-                    isSelected={selectedTile === i}
-                    isPendingWall={pendingWallTiles.includes(i)}
-                    isPendingDual={dualTargets.includes(i)}
+                    isSelected={selectedTile === i || orionTargets.includes(i)}
+                    isPendingWall={pendingWallTiles.includes(i) || seraTargets.includes(i)}
+                    isPendingDual={dualTargets.includes(i) || goliathTargets.includes(i)}
                   />
                 ))}
               </div>
@@ -1120,6 +1184,77 @@ export default function App() {
             </div>
           )}
 
+          {/* Seraphina Banner (desktop) */}
+          {gameState.status === Phase.ATTACK && isMyTurn && seraHeroId && (
+            <div className="flex-1 min-w-[280px] flex flex-col gap-3 border-l border-white/5 pl-4">
+              <div className="p-3 bg-sky-500/10 border border-sky-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">🕊️</span>
+                  <p className="text-[10px] text-sky-400 font-bold uppercase tracking-wider">
+                    Seraphina — Divine Descent
+                  </p>
+                  <button
+                    onClick={() => { setSeraHeroId(null); setSeraTargets([]); }}
+                    className="ml-auto text-white/30 hover:text-white/60 text-[9px] uppercase font-bold shrink-0"
+                  >Cancel</button>
+                </div>
+                <p className="text-[10px] text-white/50">
+                  Click up to <span className="text-sky-400 font-bold">2 cleared tiles</span> adjacent to your territory to claim them for <span className="text-sky-400 font-bold">1 Mana</span>. Auto-fires on 2nd pick.
+                  {seraTargets.length > 0 && (
+                    <span className="block mt-1 text-sky-300 font-bold">{seraTargets.length}/2 selected</span>
+                  )}
+                </p>
+                {seraTargets.length === 1 && (
+                  <button
+                    onClick={() => {
+                      socket.emit("use_hero_ability", { roomId, heroId: seraHeroId, tileId: seraTargets[0] });
+                      setSeraHeroId(null); setSeraTargets([]);
+                    }}
+                    className="mt-2 w-full py-1.5 bg-sky-600/30 hover:bg-sky-600/50 text-sky-300 border border-sky-500/40 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all"
+                  >
+                    Confirm (1 tile only)
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Goliath Banner (desktop) */}
+          {gameState.status === Phase.ATTACK && isMyTurn && goliathHeroId && (
+            <div className="flex-1 min-w-[280px] flex flex-col gap-3 border-l border-white/5 pl-4">
+              <div className="p-3 bg-orange-500/10 border border-orange-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">🛡️</span>
+                  <p className="text-[10px] text-orange-400 font-bold uppercase tracking-wider">
+                    Goliath — Iron March
+                  </p>
+                  <button
+                    onClick={() => { setGoliathHeroId(null); setGoliathTargets([]); }}
+                    className="ml-auto text-white/30 hover:text-white/60 text-[9px] uppercase font-bold shrink-0"
+                  >Cancel</button>
+                </div>
+                <p className="text-[10px] text-white/50 mb-2">
+                  Click up to <span className="text-orange-400 font-bold">3 cleared tiles</span> adjacent to your territory, then confirm.
+                  {goliathTargets.length > 0 && (
+                    <span className="block mt-1 text-orange-300 font-bold">{goliathTargets.length}/3 selected</span>
+                  )}
+                </p>
+                <button
+                  onClick={() => {
+                    if (goliathTargets.length === 0) return;
+                    const [t1, t2, t3] = goliathTargets;
+                    socket.emit("use_hero_ability", { roomId, heroId: goliathHeroId, tileId: t1, tileId2: t2 ?? null, fromResource: t3 !== undefined ? String(t3) : undefined });
+                    setGoliathHeroId(null); setGoliathTargets([]);
+                  }}
+                  disabled={goliathTargets.length === 0}
+                  className="w-full py-1.5 bg-orange-600/30 hover:bg-orange-600/50 disabled:opacity-30 disabled:cursor-not-allowed text-orange-300 border border-orange-500/40 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all"
+                >
+                  🛡️ Confirm ({goliathTargets.length} tile{goliathTargets.length !== 1 ? 's' : ''})
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Generic Tile-Targeting Banner (desktop) — for Tess, Boff, and tile-targeted gear */}
           {isMyTurn && selectedCard && !selectedCard.startsWith("ewud") && !selectedCard.startsWith("vera") && !selectedCard.startsWith("g_medkit") && (
             (() => {
@@ -1128,7 +1263,7 @@ export default function App() {
               const isTargeting = tileTargetCards.some(id => base.startsWith(id) || selectedCard.startsWith(id));
               if (!isTargeting) return null;
               const labels: Record<string, string> = {
-                tess: "Reveal monster HP in a 3x3 area — click center tile",
+                tess: "Deal 1 damage to every monster in a 3×3 area — click center tile",
                 boff: "Repair a wall for 1 Wood — click an owned tile",
                 g_wand: "Deal 2 damage for 1 Mana — click a monster tile",
                 g_bribe: "Pay 5 gems to claim tile — click a monster tile",
@@ -1139,7 +1274,7 @@ export default function App() {
                 g_bait: "Move monster to adjacent tile — click the monster tile",
                 g_caltrops: "Lay Caltrops — click an owned tile",
                 g_blueprints: "Free build (no action space) — click an owned tile",
-                g_lance: "Lance charge — click an adjacent monster tile",
+                g_lance: "Deal 4 damage — click an adjacent monster tile",
                 g_ballista: "Ballista shot — click a monster in line-of-sight of your wall",
               };
               const hint = Object.entries(labels).find(([k]) => base.startsWith(k) || selectedCard.startsWith(k))?.[1] ?? "Click a tile on the board";
@@ -1219,6 +1354,7 @@ export default function App() {
                 </div>
                 <StatCard icon={<Zap className="w-4 h-4 text-blue-400" />} label="Mana" value={me.mana} />
                 <StatCard icon={<Trees className="w-4 h-4 text-amber-600" />} label="Wood" value={me.wood} />
+                <StatCard icon={<Layers className="w-4 h-4 text-orange-400" />} label="Clay" value={me.clay} />
                 <StatCard icon={<Mountain className="w-4 h-4 text-stone-400" />} label="Stone" value={me.stone} />
               </div>
             )}
@@ -1479,6 +1615,15 @@ export default function App() {
       </AnimatePresence>
 
       {showRulebook && <Rulebook onClose={() => setShowRulebook(false)} />}
+
+      <AnimatePresence>
+        {pendingBonusCard && (
+          <BonusCardRevealModal
+            card={pendingBonusCard}
+            onAction={handleBonusCardRevealAction}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -2235,6 +2380,28 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
           </div>
         )}
 
+        {/* Trap badges: caltrops (-2) and/or Pip (-3) — shown at bottom-right */}
+        {tile.ownerId && (tile.caltropsOwnerId || tile.pipOwnerId) && (
+          <div className="absolute bottom-0 right-0 flex flex-col items-end gap-px pointer-events-none z-10">
+            {tile.caltropsOwnerId && (
+              <span
+                className="text-[7px] font-black leading-none px-0.5 rounded-tl-sm"
+                style={{ backgroundColor: "rgba(0,0,0,0.65)", color: "#f59e0b", textShadow: "0 0 3px #f59e0b99" }}
+              >
+                −2
+              </span>
+            )}
+            {tile.pipOwnerId && (
+              <span
+                className="text-[7px] font-black leading-none px-0.5 rounded-tl-sm"
+                style={{ backgroundColor: "rgba(0,0,0,0.65)", color: "#f43f5e", textShadow: "0 0 3px #f43f5e99" }}
+              >
+                −3
+              </span>
+            )}
+          </div>
+        )}
+
         {tile.ownerId && (
           <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundColor: owner?.color }} />
         )}
@@ -2280,6 +2447,58 @@ function TileView(props: { tile: Tile, players: any[], onClick: () => void, isSe
             <div
               className="mx-auto w-2 h-2 rotate-45 -mt-1"
               style={{ backgroundColor: "#0f0f12", borderRight: `1px solid ${monsterColor}55`, borderBottom: `1px solid ${monsterColor}55` }}
+            />
+          </motion.div>
+        )}
+
+        {/* Tooltip for Enemy Player Tiles */}
+        {hovered && !tile.monsterType && tile.ownerId && tile.monsterMaxHP > 0 && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92, x: "-50%" }}
+            animate={{ opacity: 1, scale: 1, x: "-50%" }}
+            exit={{ opacity: 0, scale: 0.92, x: "-50%" }}
+            transition={{ duration: 0.1 }}
+            className="pointer-events-none z-[9999]"
+            style={{
+              position: "fixed",
+              top: tooltipPos.top - 12,
+              left: tooltipPos.left,
+              minWidth: "120px",
+              translateY: "-100%",
+            }}
+          >
+            <div
+              className="rounded-lg px-3 py-2 shadow-2xl border text-center"
+              style={{
+                background: `linear-gradient(135deg, #0f0f12 60%, ${owner?.color || '#6366f1'}22)`,
+                borderColor: `${owner?.color || '#6366f1'}55`,
+                boxShadow: `0 4px 24px 0 ${owner?.color || '#6366f1'}33`
+              }}
+            >
+              <div className="text-[10px] font-extrabold uppercase tracking-widest leading-none mb-1 text-white/90" style={{ color: owner?.color || '#6366f1' }}>
+                {owner?.name ? `${owner.name}'s Tile` : "Enemy Tile"}
+              </div>
+              <div className="text-[9px] font-bold text-white/50 uppercase tracking-widest mb-1.5">
+                {tile.structure === StructureType.WALL ? `Wall (Lv.${tile.level || 1})` :
+                  tile.structure === StructureType.MOAT ? `Moat (Lv.${tile.level || 1})` :
+                    tile.structure === StructureType.BARRACKS ? "Barracks" :
+                      tile.structure === StructureType.SMITHY ? "Smithy" :
+                        tile.structure === StructureType.GATE ? "Gate" :
+                          tile.structure === StructureType.FLAGPOLE ? "Flagpole" : "Unoccupied Base"}
+              </div>
+              <div className="text-[9px] font-mono font-bold text-white/70 mb-1.5">
+                🛡 {tile.monsterHP} / {tile.monsterMaxHP}
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${hpPercent}%`, backgroundColor: owner?.color || '#6366f1', boxShadow: `0 0 6px ${owner?.color || '#6366f1'}` }}
+                />
+              </div>
+            </div>
+            <div
+              className="mx-auto w-2 h-2 rotate-45 -mt-1"
+              style={{ backgroundColor: "#0f0f12", borderRight: `1px solid ${owner?.color || '#6366f1'}55`, borderBottom: `1px solid ${owner?.color || '#6366f1'}55` }}
             />
           </motion.div>
         )}
@@ -2493,7 +2712,7 @@ function Rulebook({ onClose }: { onClose: () => void }) {
           <div className="sticky top-0 z-10 bg-[#12110f] border-b border-yellow-500/20 px-8 py-5 flex items-center justify-between rounded-t-2xl">
             <div className="flex items-center gap-3">
               <Scroll className="w-6 h-6 text-yellow-400" />
-              <h1 className="text-xl font-bold uppercase tracking-widest text-yellow-400">Dungeon Gacha — Rulebook</h1>
+              <h1 className="text-xl font-bold uppercase tracking-widest text-yellow-400">Hero of the Dungeon — Rulebook</h1>
             </div>
             <button onClick={onClose} className="text-white/40 hover:text-white text-2xl leading-none transition-colors">×</button>
           </div>
@@ -2502,7 +2721,7 @@ function Rulebook({ onClose }: { onClose: () => void }) {
           <div className="px-8 py-6">
 
             <RuleSection title="🏰 Overview">
-              <p><strong className="text-white">Dungeon Gacha</strong> is a competitive strategy game for <strong className="text-white">1–4 players</strong>. Each player is a Dungeon Master racing to claim the center of a shared <strong className="text-white">9×9 dungeon floor</strong>, build a Flagpole there, and win a final bidding war. Players expand by defeating monsters, constructing fortifications, summoning heroes, and equipping powerful gear.</p>
+              <p><strong className="text-white">Hero of the Dungeon</strong> is a competitive strategy game for <strong className="text-white">1–4 players</strong>. Each player is a Dungeon Master racing to claim the center of a shared <strong className="text-white">9×9 dungeon floor</strong>, build a Flagpole there, and win a final bidding war. Players expand by defeating monsters, constructing fortifications, summoning heroes, and equipping powerful gear.</p>
             </RuleSection>
 
             <RuleSection title="⚔️ Board Setup">
@@ -2525,7 +2744,7 @@ function Rulebook({ onClose }: { onClose: () => void }) {
                 <div className="flex gap-2"><span className="text-yellow-400 font-bold w-6">1.</span><span><strong className="text-white">Income Collection</strong> — earn Gemstones based on tiles controlled</span></div>
                 <div className="flex gap-2"><span className="text-yellow-400 font-bold w-6">2.</span><span><strong className="text-white">Preparation Phase</strong> — claim action spaces to build, summon, and gather resources</span></div>
                 <div className="flex gap-2"><span className="text-yellow-400 font-bold w-6">3.</span><span><strong className="text-white">Attack Phase</strong> — use heroes and gear to defeat monsters and assault enemies</span></div>
-                <div className="flex gap-2"><span className="text-yellow-400 font-bold w-6">4.</span><span><strong className="text-white">Monster Reclamation</strong> — unoccupied, unfortified tiles are retaken by new monsters</span></div>
+                <div className="flex gap-2"><span className="text-yellow-400 font-bold w-6">4.</span><span><strong className="text-white">Monster Reclamation</strong> — unoccupied/unfortified tiles are retaken by monsters; Dragon &amp; Demon King tiles can also reclaim occupied tiles</span></div>
                 <div className="flex gap-2"><span className="text-yellow-400 font-bold w-6">5.</span><span><strong className="text-white">End of Round</strong> — reset hero abilities, tick down occupation tokens, advance round counter</span></div>
               </div>
             </RuleSection>
@@ -2569,7 +2788,7 @@ function Rulebook({ onClose }: { onClose: () => void }) {
               <RuleRow label="Deck refresh">After every 6th hero summoned, draw 6 new cards (with at least 1 Epic guaranteed).</RuleRow>
               <RuleRow label="10th summon bonus">Every 10th total summon rewards a random <strong className="text-white">Special Hero</strong> (Ignis, Seraphina, Mordecai, or Goliath) if Barracks space is available.</RuleRow>
               <RuleRow label="Ready / Spent">Green = hero can act this turn. Red = ability already used. All heroes reset at the start of each Preparation Phase.</RuleRow>
-              <RuleRow label="Occupation">Heroes with an Occupy ability place a token on a tile instead of dealing damage — that tile counts as yours and is protected from monster reclamation.</RuleRow>
+              <RuleRow label="Occupation">Heroes with an Occupy ability station themselves on a tile — that tile counts as yours and is protected from regular monster reclamation. <strong className="text-white">Occupy target must be orthogonally adjacent to an already-occupied tile</strong> (one with a structure or another hero token). Dragon and Demon King tiles ignore occupation and force-reclaim those squares unless a Tower Shield is present.</RuleRow>
               <p className="mt-2 font-bold text-white/80 text-[12px] uppercase tracking-wider">Hero Roster</p>
               <div className="mt-1 space-y-0.5 text-[12px]">
                 <p className="text-white/50 italic mb-1">Normal Heroes (deal 1–2 dmg or utility; Level 2 improves effect)</p>
@@ -2580,9 +2799,10 @@ function Rulebook({ onClose }: { onClose: () => void }) {
                 <RuleRow label="Slink">Steal 2 gems from an adjacent player</RuleRow>
                 <RuleRow label="Lina">Next hero attack deals +1 damage (then resets)</RuleRow>
                 <RuleRow label="Orion">Swap positions of any 2 monsters on the board</RuleRow>
-                <RuleRow label="Tess">Reveal HP of all monsters in a 3×3 area</RuleRow>
+                <RuleRow label="Tess">Deal 1 damage to every monster in a 3×3 area (click center tile)</RuleRow>
                 <RuleRow label="Niles">Gain 3 gems when an adjacent monster is defeated</RuleRow>
-                <RuleRow label="Eliza / Mura / Pip">Occupy 1 tile (Pip ignores Moats)</RuleRow>
+                <RuleRow label="Eliza / Mura">Occupy 1 adjacent tile</RuleRow>
+                <RuleRow label="Pip">Set a trap on an owned tile (tile stays <em>liberated</em>, shows a <span className="text-rose-400 font-bold">−3</span> badge). Any monster that reclaims it spawns at −3 HP.</RuleRow>
                 <RuleRow label="Vera">Refresh another hero’s spent ability (Prep)</RuleRow>
                 <RuleRow label="Cora">Enemies attacking this tile must spend +1 Mana (Prep)</RuleRow>
                 <RuleRow label="Finley">Reduce wall build cost by 1 Wood this round (Prep)</RuleRow>
@@ -2617,16 +2837,16 @@ function Rulebook({ onClose }: { onClose: () => void }) {
                 <RuleRow label="Poison Dagger">Target takes 1 damage at end of this round and next</RuleRow>
                 <RuleRow label="War Horn">All your heroes deal +1 damage this Attack Phase</RuleRow>
                 <RuleRow label="Spiked Knuckles">2 damage; gain 2 gems if monster dies</RuleRow>
-                <RuleRow label="Lance">3 damage if a hero moved into this tile this turn</RuleRow>
+                <RuleRow label="Lance">4 damage to an adjacent monster tile</RuleRow>
                 <RuleRow label="Magic Wand">2 damage, spending 1 Mana instead of an action</RuleRow>
                 <RuleRow label="Ballista">Place on a Wall; auto-deals 2 damage to monsters in line of sight</RuleRow>
               </div>
               <p className="mt-2 font-bold text-white/80 text-[12px] uppercase tracking-wider">Defensive & Utility Gear</p>
               <div className="mt-1 space-y-0.5 text-[12px]">
-                <RuleRow label="Tower Shield">Your occupying hero cannot be removed by Dragon/Demon effects</RuleRow>
+                <RuleRow label="Tower Shield">The occupying hero on this tile is <strong className="text-white">immune to Dragon/Demon King forced reclamation</strong>. Dragon and Demon King tiles normally evict heroes at round end; Tower Shield prevents this.</RuleRow>
                 <RuleRow label="Monster Bait">Move an adjacent monster to your current tile</RuleRow>
                 <RuleRow label="Plated Boots">Your hero may occupy a Moat tile</RuleRow>
-                <RuleRow label="Spyglass">Look at the top 3 cards of the Hero Deck (Prep)</RuleRow>
+                <RuleRow label="Spyglass">Gain 3 Mana instantly (Prep)</RuleRow>
                 <RuleRow label="Mining Pick">Spend 1 Mana → gain 2 Stone (Prep)</RuleRow>
                 <RuleRow label="Trowel">Spend 1 Mana → gain 2 Clay (Prep)</RuleRow>
                 <RuleRow label="Lumber Axe">Spend 1 Mana → gain 3 Wood (Prep)</RuleRow>
@@ -2667,6 +2887,7 @@ function Rulebook({ onClose }: { onClose: () => void }) {
               <RuleRow label="Damage modifiers">Iron Longsword +1 · Slayer’s Axe +3 vs Orcs/Giants · Dax +2 vs Giants+ · War Horn +1 all heroes this phase · Lina buff +1 next attack · Stun (Mordecai) +2 on stunned target · Poison: 1 dmg/round for 2 rounds</RuleRow>
               <RuleRow label="Bonus Card trigger">Earn 1 Bonus Card if you defeat <strong className="text-white">3+ monsters</strong> OR capture <strong className="text-white">3+ enemy tiles</strong> in one Attack Phase (max 1 card per phase).</RuleRow>
               <RuleRow label="! Liberated tiles">A red <strong className="text-red-400">!</strong> badge marks tiles you own with no structure and no occupying hero — these <strong className="text-white">will be reclaimed</strong> at end of round. Fortify them or station an Occupy-ability hero.</RuleRow>
+              <RuleRow label="Dragon/Demon King">These monster types are especially powerful: even <strong className="text-white">occupied tiles</strong> in their spawn zone will be force-reclaimed at round end. Only the <strong className="text-white">Tower Shield</strong> gear can protect an occupying hero from this eviction.</RuleRow>
             </RuleSection>
 
             <RuleSection title="⭐ Bonus Cards">
@@ -2684,7 +2905,7 @@ function Rulebook({ onClose }: { onClose: () => void }) {
             <RuleSection title="🏗 Structures">
               <div className="space-y-1">
                 <RuleRow label="Wall 🧱">Build: 2 Wood. Defense: +6 HP (Level 2: +10). Upgrade with 1 Stone. Reinforced Bricks gear adds +2 HP per tier.</RuleRow>
-                <RuleRow label="Moat 🌊">Build: 5 Gems. Defense: +8 HP (Level 2: +12). Most heroes cannot pass through or occupy a Moat (exception: Pip, Plated Boots).</RuleRow>
+                <RuleRow label="Moat 🌊">Build: 5 Gems. Defense: +8 HP (Level 2: +12). Most heroes cannot occupy a Moat (exception: Plated Boots).</RuleRow>
                 <RuleRow label="Barracks 🛡">Build: 6 Wood + 2 Clay. Holds 3 heroes. Required for hero capacity beyond your 1st free summon.</RuleRow>
                 <RuleRow label="Smithy 🔨">Build: 1 Clay + 2 Stone. Required to use the Create Gear action.</RuleRow>
                 <RuleRow label="Gate 🏰">Indestructible by heroes. Enemies must spend 4 Mana to bypass it.</RuleRow>
@@ -2740,6 +2961,113 @@ function Rulebook({ onClose }: { onClose: () => void }) {
         </motion.div>
       </motion.div>
     </AnimatePresence>
+  );
+}
+
+function BonusCardRevealModal({ card, onAction }: { card: any, onAction: (action: "use" | "hand") => void }) {
+  const isInstant = card.id.startsWith("bc_caravan") || card.id.startsWith("bc_cache");
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex items-center justify-center p-4"
+    >
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        {/* Simple particle effect background */}
+        {Array.from({ length: 20 }).map((_, i) => (
+          <motion.div
+            key={i}
+            initial={{ y: "100vh", x: Math.random() * window.innerWidth, opacity: 0 }}
+            animate={{
+              y: "-10vh",
+              opacity: [0, 1, 0],
+            }}
+            transition={{
+              duration: 3 + Math.random() * 2,
+              repeat: Infinity,
+              delay: Math.random() * 2,
+              ease: "linear"
+            }}
+            className="absolute bottom-0 w-2 h-2 rounded-full bg-yellow-400/30 blur-[2px]"
+          />
+        ))}
+      </div>
+
+      <motion.div
+        initial={{ scale: 0.8, y: 50 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.8, y: 50, opacity: 0 }}
+        transition={{ type: "spring", bounce: 0.5 }}
+        className="w-full max-w-sm flex flex-col items-center gap-6 relative z-10"
+      >
+        <div className="text-center space-y-2">
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1, rotate: 360 }}
+            transition={{ type: "spring", delay: 0.2 }}
+            className="w-20 h-20 mx-auto bg-gradient-to-br from-yellow-400 to-amber-600 rounded-full flex items-center justify-center shadow-[0_0_50px_rgba(251,191,36,0.5)] border-4 border-yellow-200"
+          >
+            <Star className="w-10 h-10 text-yellow-100 fill-current" />
+          </motion.div>
+          <motion.h2
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="text-3xl font-black uppercase tracking-tighter text-yellow-400"
+            style={{ textShadow: "0 0 20px rgba(250,204,21,0.5)" }}
+          >
+            Bonus Reward!
+          </motion.h2>
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.4 }}
+            className="text-white/60 text-xs font-bold uppercase tracking-widest"
+          >
+            You earned {card.name}
+          </motion.p>
+        </div>
+
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.5 }}
+          className="w-full bg-[#151619] border border-yellow-500/30 p-6 rounded-2xl shadow-xl shadow-yellow-900/20 text-center"
+        >
+          <div className="bg-yellow-500/10 text-yellow-400 text-[10px] font-bold uppercase tracking-widest inline-block px-3 py-1 rounded-full mb-4">
+            {isInstant ? "Instant Effect" : "Add to Hand"}
+          </div>
+          <h3 className="text-xl font-bold mb-2">{card.name}</h3>
+          <p className="text-sm text-white/70 leading-relaxed mb-6">{card.ability}</p>
+
+          {isInstant ? (
+            <div className="space-y-3">
+              <button
+                onClick={() => onAction("use")}
+                className="w-full bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-400 hover:to-amber-500 text-black font-black py-4 rounded-xl uppercase tracking-widest transition-all shadow-lg shadow-yellow-500/20 hover:scale-[1.02]"
+              >
+                Use Now!
+              </button>
+              <button
+                onClick={() => onAction("hand")}
+                className="w-full py-3 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white rounded-xl text-xs font-bold uppercase tracking-widest transition-colors"
+              >
+                Save for later
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => onAction("hand")}
+              className="w-full bg-white text-black hover:bg-gray-200 font-bold py-4 rounded-xl uppercase tracking-widest transition-all hover:scale-[1.02]"
+            >
+              Add to Hand
+            </button>
+          )}
+        </motion.div>
+      </motion.div>
+    </motion.div>
   );
 }
 

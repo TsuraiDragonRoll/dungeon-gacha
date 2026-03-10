@@ -61,6 +61,7 @@ export interface Tile {
   poisonRoundsLeft?: number;               // Poison Dagger: ticks of poison remaining
   poisonOwnerId?: string | null;           // Player who applied poison
   caltropsOwnerId?: string | null;         // Caltrops: monster reclaims at -2 HP
+  pipOwnerId?: string | null;              // Pip hero trap: monster reclaims at -3 HP
 }
 
 export interface Player {

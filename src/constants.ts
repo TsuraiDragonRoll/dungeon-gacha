@@ -10,12 +10,12 @@ export const HERO_CARDS: Partial<Card>[] = [
   { id: "finley", name: "Finley", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "Reduces the cost of building a wall by 1 lumber.", phase: "P", description: "A human squire" },
   { id: "mura", name: "Mura", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "Occupy 1 square.", phase: "A", description: "A naga guard" },
   { id: "grog", name: "Grog", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "Gain 1 stone if occupying a monster-cleared square.", phase: "P", description: "A dwarven miner" },
-  { id: "pip", name: "Pip", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "Occupy 1 square; ignores moats when moving.", phase: "A", description: "A kobold tunneler" },
+  { id: "pip", name: "Pip", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "Set a trap on an owned tile. If a monster reclaims it, the monster starts at −3 HP.", phase: "A", description: "A kobold tunneler" },
   { id: "vera", name: "Vera", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "Refresh the ability of 1 hero.", phase: "P", description: "A human herbalist" },
   { id: "dax", name: "Dax", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "Deals +2 damage if the monster is a Giant or larger.", phase: "A", description: "A beast hunter" },
   { id: "niles", name: "Niles", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "Gain 3 gemstones when a monster is defeated in an adjacent square.", phase: "A", description: "A human grave digger" },
   { id: "cora", name: "Cora", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "If this square is attacked, it costs the enemy +1 mana.", phase: "P", description: "A shield maiden" },
-  { id: "tess", name: "Tess", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "Reveal the health of all monsters in a 3x3 area.", phase: "A", description: "A human scout" },
+  { id: "tess", name: "Tess", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "Deal 1 damage to every monster in a 3x3 area centered on a tile you click.", phase: "A", description: "A human scout" },
   { id: "boff", name: "Boff", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "Repair a destroyed structure for 1 lumber.", phase: "P", description: "A human carpenter" },
   { id: "lina", name: "Lina", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "The next hero attack deals +1 damage.", phase: "A", description: "A human torch bearer" },
   { id: "orion", name: "Orion", type: "HERO", rarity: Rarity.NORMAL, level: 1, ability: "Swap the positions of any 2 monsters on the board.", phase: "A", description: "A star gazer" },
@@ -35,9 +35,9 @@ export const HERO_CARDS: Partial<Card>[] = [
 
 export const SPECIAL_HEROES: Partial<Card>[] = [
   { id: "ignis", name: "Ignis", type: "HERO", rarity: Rarity.SPECIAL, level: 1, ability: "Deal 6 damage to a monster and build a wooden wall on that square.", phase: "A", description: "A flame sentinel" },
-  { id: "seraphina", name: "Seraphina", type: "HERO", rarity: Rarity.SPECIAL, level: 1, ability: "Spend 1 mana to occupy any 2 non-adjacent monster-cleared squares.", phase: "A", description: "A celestial archangel" },
+  { id: "seraphina", name: "Seraphina", type: "HERO", rarity: Rarity.SPECIAL, level: 1, ability: "Spend 1 Mana to simultaneously occupy up to 2 monster-cleared squares adjacent to your territory.", phase: "A", description: "A celestial archangel" },
   { id: "mordecai", name: "Mordecai", type: "HERO", rarity: Rarity.SPECIAL, level: 1, ability: "Deal 7 damage to a monster; if it survives, it is stunned.", phase: "A", description: "A cursed warlock" },
-  { id: "goliath", name: "Goliath", type: "HERO", rarity: Rarity.SPECIAL, level: 1, ability: "Occupy 3 orthogonally adjacent squares.", phase: "A", description: "An iron guard" },
+  { id: "goliath", name: "Goliath", type: "HERO", rarity: Rarity.SPECIAL, level: 1, ability: "Occupy up to 3 cleared squares that are orthogonally adjacent to each other and to your territory.", phase: "A", description: "An iron guard" },
 ];
 
 export const GEAR_CARDS: Partial<Card>[] = [
@@ -49,15 +49,15 @@ export const GEAR_CARDS: Partial<Card>[] = [
   { id: "g_dagger", name: "Poison Dagger", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Monster takes 1 damage at the end of this and next turn.", phase: "A", description: "Offensive Gear" },
   { id: "g_horn", name: "War Horn", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "All Heroes deal +1 damage this phase.", phase: "A", description: "Offensive Gear" },
   { id: "g_knuckles", name: "Spiked Knuckles", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Deal 2 damage; if monster dies, gain 2 gems.", phase: "A", description: "Offensive Gear" },
-  { id: "g_lance", name: "Lance", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Deal 3 damage to a monster if you moved into its tile this turn.", phase: "A", description: "Offensive Gear" },
+  { id: "g_lance", name: "Lance", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Deal 4 damage to an adjacent monster tile.", phase: "A", description: "Offensive Gear" },
   { id: "g_wand", name: "Magic Wand", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Deal 2 damage (costs 1 Mana instead of an action).", phase: "A", description: "Offensive Gear" },
   { id: "g_ballista", name: "Ballista", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Place on a wall. It deals 2 damage to any monster in its line of sight.", phase: "A", description: "Offensive Gear" },
 
   // Defensive & Utility Gear
-  { id: "g_shield", name: "Tower Shield", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Occupying Hero cannot be removed by Dragon/Demon effects.", phase: "P", description: "Defensive Gear" },
+  { id: "g_shield", name: "Tower Shield", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "The occupying hero on this tile is immune to Dragon/Demon King forced reclamation.", phase: "A", description: "Defensive Gear" },
   { id: "g_bait", name: "Monster Bait", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Move a monster from an adjacent tile to your current tile.", phase: "A", description: "Utility Gear" },
   { id: "g_boots", name: "Plated Boots", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Hero can occupy a tile containing a Moat.", phase: "A", description: "Utility Gear" },
-  { id: "g_spyglass", name: "Spyglass", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Look at the top 3 cards of the Hero Deck.", phase: "P", description: "Utility Gear" },
+  { id: "g_spyglass", name: "Spyglass", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Gain 3 Mana instantly.", phase: "P", description: "Utility Gear" },
   { id: "g_pick", name: "Mining Pick", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Spend 1 Mana to gain 2 Stone.", phase: "P", description: "Utility Gear" },
   { id: "g_trowel", name: "Trowel", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Spend 1 Mana to gain 2 Clay.", phase: "P", description: "Utility Gear" },
   { id: "g_lumberaxe", name: "Lumber Axe", type: "GEAR", rarity: Rarity.NORMAL, level: 1, ability: "Spend 1 Mana to gain 3 Wood.", phase: "P", description: "Utility Gear" },
