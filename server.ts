@@ -682,7 +682,7 @@ async function startServer() {
   // ═══════════════════════════════════════════════════════════════════════════
 
   io.on("connection", (socket) => {
-    socket.on("join_game", ({ roomId, playerName }) => {
+    socket.on("join_game", ({ roomId, playerName, sessionId }) => {
       socket.join(roomId);
 
       // Resolve client IP (handles reverse proxies like Render/Nginx)
@@ -693,13 +693,13 @@ async function startServer() {
 
       // ── REJOIN CHECK ──────────────────────────────────────────────────────────
       // If the game exists (in any non-GAME_OVER phase) and a player with the same
-      // name AND IP is found, treat this as a reconnect — update their socket ID
+      // name AND sessionId (or IP fallback) is found, treat this as a reconnect — update their socket ID
       // and restore their session without touching game state.
       if (games.has(roomId)) {
         const existingGame = games.get(roomId);
         if (existingGame.status !== Phase.GAME_OVER) {
           const disconnectedPlayer = existingGame.players.find(
-            (p: any) => p.name === playerName && p.ip === clientIp
+            (p: any) => p.name === playerName && ((sessionId && p.sessionId === sessionId) || p.ip === clientIp)
           );
           if (disconnectedPlayer) {
             const oldId = disconnectedPlayer.id;
@@ -779,7 +779,8 @@ async function startServer() {
         const colors = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b"];
         game.players.push({
           id: socket.id,
-          ip: clientIp,           // stored for future reconnect identification
+          sessionId: sessionId || "",  // primary reconnect key
+          ip: clientIp,           // stored for fallback reconnect identification
           name: playerName,
           gemstones: 6,
           mana: 0,
