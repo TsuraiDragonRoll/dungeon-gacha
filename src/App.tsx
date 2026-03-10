@@ -45,6 +45,21 @@ const getNextIncomeValue = (p: any) => {
 
 const socket: Socket = io("https://dungeon-gacha.onrender.com");
 
+// ── Persistent session ID ────────────────────────────────────────────────────
+// Stored in localStorage so it survives page refreshes and socket reconnects.
+// The server uses this as the primary key for reconnect matching, which is far
+// more reliable than IP-based matching (IPs can change on Render's proxies).
+function getOrCreateSessionId(): string {
+  const key = "dungeon_gacha_session_id";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = Date.now().toString(36) + Math.random().toString(36).slice(2);
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+const SESSION_ID = getOrCreateSessionId();
+
 export default function App() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [roomId, setRoomId] = useState("");
@@ -99,12 +114,12 @@ export default function App() {
   }, []);
 
   // Re-register with the server whenever the socket reconnects mid-game.
-  // Without this, the server retains the old socket ID and rejects attacks
-  // because player.id !== socket.id.
+  // We include SESSION_ID so the server can match the player even if their IP
+  // changed (common on Render's reverse-proxy infrastructure).
   useEffect(() => {
     if (!joined || !roomId || !playerName) return;
     const handleReconnect = () => {
-      socket.emit("join_game", { roomId, playerName });
+      socket.emit("join_game", { roomId, playerName, sessionId: SESSION_ID });
     };
     socket.on("connect", handleReconnect);
     return () => { socket.off("connect", handleReconnect); };
@@ -150,7 +165,7 @@ export default function App() {
 
   const handleJoin = () => {
     if (roomId && playerName) {
-      socket.emit("join_game", { roomId, playerName });
+      socket.emit("join_game", { roomId, playerName, sessionId: SESSION_ID });
       setJoined(true);
     }
   };

@@ -65,6 +65,9 @@ export interface Tile {
 
 export interface Player {
   id: string;
+  sessionId?: string;
+  ip?: string;
+  isBot?: boolean;
   name: string;
   gemstones: number;
   mana: number;
