@@ -704,6 +704,18 @@ async function startServer() {
           if (disconnectedPlayer) {
             const oldId = disconnectedPlayer.id;
             disconnectedPlayer.id = socket.id;
+
+            // ── Update all board tile references from the old socket ID to the new one ──
+            // Without this, tile.ownerId still holds the old socket ID, which breaks every
+            // adjacency check, ownership check, and "is this my tile" display on the client.
+            existingGame.board.forEach((tile: any) => {
+              if (tile.ownerId === oldId) tile.ownerId = socket.id;
+              if (tile.caltropsOwnerId === oldId) tile.caltropsOwnerId = socket.id;
+              if (tile.poisonOwnerId === oldId) tile.poisonOwnerId = socket.id;
+              if (tile.occupationTokenOwnerId === oldId) tile.occupationTokenOwnerId = socket.id;
+              // occupiedByHeroId is a hero ID string (not a socket ID) — no update needed
+            });
+
             existingGame.logs.push(`${playerName} reconnected.`);
             // Move them into the socket room so they receive future broadcasts
             socket.join(roomId);
