@@ -252,7 +252,7 @@ export default function App() {
           return;
         }
         // Gear abilities that need a tile target in attack phase
-        const attackGearNeedingTile = ["g_wand","g_bribe","g_crossbow","g_bomb","g_knuckles","g_dagger","g_bait","g_caltrops"];
+        const attackGearNeedingTile = ["g_wand", "g_bribe", "g_crossbow", "g_bomb", "g_knuckles", "g_dagger", "g_bait", "g_caltrops", "g_lance", "g_ballista"];
         if (attackGearNeedingTile.some(g => baseId.startsWith(g))) {
           socket.emit("use_gear_ability", { roomId, gearId: selectedCard, tileId });
           setSelectedCard(null);
@@ -281,7 +281,7 @@ export default function App() {
       if (selectedCard.startsWith("ewud") || selectedCard.startsWith("boff")) {
         socket.emit("use_hero_ability", { roomId, heroId: selectedCard, tileId });
         setSelectedCard(null);
-      // Blueprints or Caltrops in prep phase
+        // Blueprints or Caltrops in prep phase
       } else if (baseId.startsWith("g_blueprints")) {
         const sType = window.confirm("Build a WALL? (Cancel = BARRACKS)") ? "WALL" : "BARRACKS";
         socket.emit("use_gear_ability", { roomId, gearId: selectedCard, tileId, structureType: sType });
@@ -341,7 +341,7 @@ export default function App() {
     // ── Alcie: prompt for resource to convert ──────────────────────────────
     if (cardId.startsWith("alcie")) {
       const res = window.prompt("Enter resource to convert (wood / clay / stone / gemstones):", "wood");
-      if (res && ["wood","clay","stone","gemstones"].includes(res.trim().toLowerCase())) {
+      if (res && ["wood", "clay", "stone", "gemstones"].includes(res.trim().toLowerCase())) {
         socket.emit("use_hero_ability", { roomId, heroId: cardId, fromResource: res.trim().toLowerCase() });
       }
       return;
@@ -363,14 +363,14 @@ export default function App() {
     const baseGearId = cardId.replace(/_m?\d+$/, "");
 
     // Immediate gear abilities (no tile needed)
-    const immediateGear = ["g_pick","g_trowel","g_lumberaxe","g_spyglass","g_horn"];
+    const immediateGear = ["g_pick", "g_trowel", "g_lumberaxe", "g_spyglass", "g_horn"];
     if (immediateGear.some(g => baseGearId === g)) {
       socket.emit("use_gear_ability", { roomId, gearId: cardId });
       return;
     }
 
     // Tile-targeted gear abilities (set selectedCard, handle in handleTileClick)
-    const tileTargetGear = ["g_wand","g_bribe","g_crossbow","g_bomb","g_knuckles","g_dagger","g_bait","g_caltrops","g_blueprints"];
+    const tileTargetGear = ["g_wand", "g_bribe", "g_crossbow", "g_bomb", "g_knuckles", "g_dagger", "g_bait", "g_caltrops", "g_blueprints", "g_lance", "g_ballista"];
     if (tileTargetGear.some(g => baseGearId === g)) {
       if (selectedCard === cardId) { setSelectedCard(null); } else { setSelectedCard(cardId); }
       return;
@@ -454,7 +454,7 @@ export default function App() {
 
   if (!joined) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center p-4 font-sans">
+      <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center p-4 font-sans relative">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -499,6 +499,10 @@ export default function App() {
             </button>
           </div>
         </motion.div>
+        {/* Version number — update last digit on every change */}
+        <div className="absolute bottom-3 left-4 text-white/20 text-[10px] font-mono tracking-widest select-none">
+          (Ver. 1.0.2)
+        </div>
         {showRulebook && <Rulebook onClose={() => setShowRulebook(false)} />}
       </div>
     );
@@ -549,12 +553,37 @@ export default function App() {
         </div>
 
         <div className="p-3 bg-black/40 border-t border-white/5 h-36 overflow-y-auto shrink-0">
-          <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/30 mb-2">Chronicles</h3>
-          {gameState.logs.slice(-10).reverse().map((log, i) => (
-            <p key={i} className="text-[11px] text-white/50 mb-1 leading-relaxed">
-              <span className="text-emerald-500 mr-1">»</span> {log}
-            </p>
-          ))}
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/30">Chronicles</h3>
+            <button
+              onClick={() => {
+                const text = gameState.logs.join('\n');
+                navigator.clipboard.writeText(text).then(() => {
+                  /* subtle visual feedback via title flicker */
+                }).catch(() => { });
+              }}
+              title="Copy Chronicles to Clipboard"
+              className="text-[9px] font-bold uppercase tracking-widest text-white/20 hover:text-emerald-400 border border-white/10 hover:border-emerald-500/40 px-1.5 py-0.5 rounded transition-all"
+            >
+              Copy
+            </button>
+          </div>
+          {gameState.logs.slice().reverse().map((log, i) => {
+            const isTurnHeader = log.startsWith('[Turn ');
+            return (
+              <p key={i} className={`text-[11px] mb-1 leading-relaxed ${isTurnHeader
+                ? 'text-yellow-400/70 font-semibold'
+                : 'text-white/50'
+                }`}>
+                {isTurnHeader ? (
+                  <span className="text-yellow-500 mr-1">◆</span>
+                ) : (
+                  <span className="text-emerald-500 mr-1">»</span>
+                )}
+                {log}
+              </p>
+            );
+          })}
         </div>
       </div>
 
@@ -1080,7 +1109,7 @@ export default function App() {
           {isMyTurn && selectedCard && !selectedCard.startsWith("ewud") && !selectedCard.startsWith("vera") && !selectedCard.startsWith("g_medkit") && (
             (() => {
               const base = selectedCard.replace(/_m?\d+$/, "");
-              const tileTargetCards = ["tess","boff","g_wand","g_bribe","g_crossbow","g_bomb","g_knuckles","g_dagger","g_bait","g_caltrops","g_blueprints"];
+              const tileTargetCards = ["tess", "boff", "g_wand", "g_bribe", "g_crossbow", "g_bomb", "g_knuckles", "g_dagger", "g_bait", "g_caltrops", "g_blueprints", "g_lance", "g_ballista"];
               const isTargeting = tileTargetCards.some(id => base.startsWith(id) || selectedCard.startsWith(id));
               if (!isTargeting) return null;
               const labels: Record<string, string> = {
@@ -1095,6 +1124,8 @@ export default function App() {
                 g_bait: "Move monster to adjacent tile — click the monster tile",
                 g_caltrops: "Lay Caltrops — click an owned tile",
                 g_blueprints: "Free build (no action space) — click an owned tile",
+                g_lance: "Lance charge — click an adjacent monster tile",
+                g_ballista: "Ballista shot — click a monster in line-of-sight of your wall",
               };
               const hint = Object.entries(labels).find(([k]) => base.startsWith(k) || selectedCard.startsWith(k))?.[1] ?? "Click a tile on the board";
               return (
@@ -1342,7 +1373,7 @@ export default function App() {
             {isMyTurn && selectedCard && !selectedCard.startsWith("ewud") && !selectedCard.startsWith("vera") && !selectedCard.startsWith("g_medkit") && (
               (() => {
                 const base = selectedCard.replace(/_m?\d+$/, "");
-                const tileTargetCards = ["tess","boff","g_wand","g_bribe","g_crossbow","g_bomb","g_knuckles","g_dagger","g_bait","g_caltrops","g_blueprints"];
+                const tileTargetCards = ["tess", "boff", "g_wand", "g_bribe", "g_crossbow", "g_bomb", "g_knuckles", "g_dagger", "g_bait", "g_caltrops", "g_blueprints", "g_lance", "g_ballista"];
                 const isTargeting = tileTargetCards.some(id => base.startsWith(id) || selectedCard.startsWith(id));
                 if (!isTargeting) return null;
                 const labels: Record<string, string> = {
@@ -1357,6 +1388,8 @@ export default function App() {
                   g_bait: "Click a monster tile to bait it away",
                   g_caltrops: "Click an owned tile to lay Caltrops",
                   g_blueprints: "Click an owned tile to build (no action space)",
+                  g_lance: "Lance charge — click an adjacent monster tile",
+                  g_ballista: "Ballista — click a monster in line-of-sight of your wall",
                 };
                 const hint = Object.entries(labels).find(([k]) => base.startsWith(k) || selectedCard.startsWith(k))?.[1] ?? "Click a tile";
                 return (
@@ -2454,118 +2487,229 @@ function Rulebook({ onClose }: { onClose: () => void }) {
           <div className="px-8 py-6">
 
             <RuleSection title="🏰 Overview">
-              <p>Dungeon Gacha is a <strong className="text-white">2–4 player</strong> strategic dungeon conquest game played on a <strong className="text-white">9×9 grid</strong>. Players start on opposite edges and expand by defeating monsters, building structures, summoning heroes, and equipping gear. The first player to clear the centre tile and win the <strong className="text-white">Flagpole Bidding War</strong> becomes the Dungeon Gacha Champion.</p>
+              <p><strong className="text-white">Dungeon Gacha</strong> is a competitive strategy game for <strong className="text-white">1–4 players</strong>. Each player is a Dungeon Master racing to claim the center of a shared <strong className="text-white">9×9 dungeon floor</strong>, build a Flagpole there, and win a final bidding war. Players expand by defeating monsters, constructing fortifications, summoning heroes, and equipping powerful gear.</p>
             </RuleSection>
 
-            <RuleSection title="⚔️ Setup & Drafting">
-              <RuleRow label="Players">2–4 Dungeon Masters. Each starts with 3 tiles along one board edge and 6 Gemstones.</RuleRow>
-              <RuleRow label="Starting tiles">The centre of your 3 tiles has a Gate. The flanking two are empty owned tiles.</RuleRow>
-              <RuleRow label="Drafting phase">Each player receives 6 Hero cards. Pick one, pass the hand clockwise, repeat until all cards are gone. All card types flow through the same draft.</RuleRow>
-              <RuleRow label="Drafted hand">Cards you draft sit in your Drafted Hand and can later be Summoned (heroes) or Created as Gear during Preparation phases.</RuleRow>
-              <RuleRow label="Refilling">When your Drafted Hand empties after a summon/create action, you automatically draw 6 new cards from the deck.</RuleRow>
+            <RuleSection title="⚔️ Board Setup">
+              <p className="mb-3">The dungeon is a <strong className="text-white">9×9 grid</strong> (81 tiles). Tile 40 (row 4, col 4) is the <strong className="text-white">center tile</strong> — home to the Demon King and the only place a Flagpole can be built.</p>
+              <RuleRow label="Monster placement">Monsters spawn by Chebyshev distance from center:</RuleRow>
+              <div className="ml-2 mt-1 mb-3 space-y-0.5">
+                <div className="flex gap-4"><span className="text-yellow-300/70 w-28">Distance 0</span><span>Demon King — <strong className="text-white">22 HP</strong></span></div>
+                <div className="flex gap-4"><span className="text-yellow-300/70 w-28">Distance 1</span><span>Dragon — <strong className="text-white">14 HP</strong></span></div>
+                <div className="flex gap-4"><span className="text-yellow-300/70 w-28">Distance 2</span><span>Giant — <strong className="text-white">8 HP</strong></span></div>
+                <div className="flex gap-4"><span className="text-yellow-300/70 w-28">Distance 3</span><span>Orc — <strong className="text-white">5 HP</strong></span></div>
+                <div className="flex gap-4"><span className="text-yellow-300/70 w-28">Distance 4+</span><span>Goblin — <strong className="text-white">2 HP</strong></span></div>
+              </div>
+              <RuleRow label="Starting positions">Each player begins with <strong className="text-white">3 claimed tiles</strong> along one board edge. Starting tiles cannot be reclaimed by monsters.</RuleRow>
+              <RuleRow label="Starting resources">6 Gemstones · 0 Mana · 0 Wood · 0 Clay · 0 Stone</RuleRow>
             </RuleSection>
 
-            <RuleSection title="🔄 Game Phases">
-              <p className="mb-2">Each round alternates between two phases:</p>
-              <RuleRow label="Preparation">Players take turns selecting one action from the shared Action Spaces. Click <em>Finish Prep</em> when done. You can use <em>Undo Finish Prep</em> to jump back in if it's still your turn.</RuleRow>
-              <RuleRow label="Attack">Players take turns using heroes or mana to attack monsters or enemy tiles. Click <em>Confirm Turn</em> when finished.</RuleRow>
-              <p className="mt-2 text-white/50 text-[11px]">Resources on unclaimed action spaces stack each round. Note: Collecting an accumulated space resets its internal value to zero for the next round (so it starts at its base amount next turn).</p>
+            <RuleSection title="🔄 Round Structure">
+              <p className="mb-2">Each round follows these five steps in order:</p>
+              <div className="space-y-1 ml-2">
+                <div className="flex gap-2"><span className="text-yellow-400 font-bold w-6">1.</span><span><strong className="text-white">Income Collection</strong> — earn Gemstones based on tiles controlled</span></div>
+                <div className="flex gap-2"><span className="text-yellow-400 font-bold w-6">2.</span><span><strong className="text-white">Preparation Phase</strong> — claim action spaces to build, summon, and gather resources</span></div>
+                <div className="flex gap-2"><span className="text-yellow-400 font-bold w-6">3.</span><span><strong className="text-white">Attack Phase</strong> — use heroes and gear to defeat monsters and assault enemies</span></div>
+                <div className="flex gap-2"><span className="text-yellow-400 font-bold w-6">4.</span><span><strong className="text-white">Monster Reclamation</strong> — unoccupied, unfortified tiles are retaken by new monsters</span></div>
+                <div className="flex gap-2"><span className="text-yellow-400 font-bold w-6">5.</span><span><strong className="text-white">End of Round</strong> — reset hero abilities, tick down occupation tokens, advance round counter</span></div>
+              </div>
             </RuleSection>
 
-            <RuleSection title="💰 Resources">
-              <RuleRow label="Gemstones 💎">Main currency. Earned as tile-scaled income each round. Projected income is shown as a <span className="text-red-400">+X next</span> badge.</RuleRow>
-              <RuleRow label="Mana ⚡">Used for repeated summons, mana attacks, and capturing enemy tiles. Generated via Mana action spaces (2 Gems → 1 Mana).</RuleRow>
-              <RuleRow label="Wood 🌲">Required: Walls (2W), Barracks (6W + 2C), and Bidding War entry (3W).</RuleRow>
-              <RuleRow label="Clay">Required: Barracks (2C), Smithy (1C + 2S).</RuleRow>
-              <RuleRow label="Stone ⛰">Required: Smithy (2S), Bidding War entry (1S).</RuleRow>
-              <RuleRow label="Income scale">3–5 tiles: ×4 Gems · 6–10: ×3 · 11–17: ×2 · 18+: ×1 Gem per tile. Check player tooltips for projected totals.</RuleRow>
+            <RuleSection title="💰 Step 1 — Income Collection">
+              <p className="mb-2">At the start of each round, earn Gemstones based on tiles you control:</p>
+              <div className="ml-2 space-y-0.5 mb-3">
+                <div className="flex gap-4"><span className="text-yellow-300/70 w-20">3–5 tiles</span><span>×4 Gems per tile</span></div>
+                <div className="flex gap-4"><span className="text-yellow-300/70 w-20">6–10 tiles</span><span>×3 Gems per tile</span></div>
+                <div className="flex gap-4"><span className="text-yellow-300/70 w-20">11–17 tiles</span><span>×2 Gems per tile</span></div>
+                <div className="flex gap-4"><span className="text-yellow-300/70 w-20">18+ tiles</span><span>×1 Gem per tile</span></div>
+              </div>
+              <RuleRow label="Gem bonuses">Tax Box gear: +1 gem/tile · Golden Compass: +5 gems if you hold a corner · Trove hero: +4 gems/Prep · Zale hero: +2 gems if adjacent to a Moat</RuleRow>
+              <RuleRow label="Projected income">Your income for next round is shown as a <span className="text-green-400">+X next</span> badge on the resource bar.</RuleRow>
             </RuleSection>
 
-            <RuleSection title="🎯 Action Spaces (Preparation)">
-              <RuleRow label="Purchase Lumber">6 Gems → 4 Wood (stacks +4 each unclaimed round)</RuleRow>
-              <RuleRow label="Purchase Clay">6 Gems → 1 Clay (stacks +1/round)</RuleRow>
-              <RuleRow label="Purchase Stone">6 Gems → 1 Stone (stacks +1/round)</RuleRow>
-              <RuleRow label="Generate Mana">2 Gems → 1 Mana (choose quantity with slider)</RuleRow>
-              <RuleRow label="Build Wall">10 Gems + 2 Wood → place Wall on designated owned tile</RuleRow>
-              <RuleRow label="Dig Moat">5 Gems → place Moat on designated owned tile</RuleRow>
-              <RuleRow label="Build Barracks">10 Gems + 6 Wood + 2 Clay → each Barracks holds 3 heroes</RuleRow>
-              <RuleRow label="Summon Hero">8 Gems + N Mana (N = summons done this round) → pull a hero from Drafted Hand. Your very first ever summon bypasses both the Mana cost and Barracks requirement.</RuleRow>
-              <RuleRow label="Build Smithy">10 Gems + 1 Clay + 2 Stone → unlocks Create Gear action</RuleRow>
-              <RuleRow label="Create Gear">8 Gems + owned Smithy → equip a Gear card from Drafted Hand</RuleRow>
-              <RuleRow label="Secondary Actions">In 3+ player games, extra slots for Summon, Gear, and Resources appear to prevent bottlenecks.</RuleRow>
-              <RuleRow label="Build Flagpole">Free — only unlocked once centre tile (40) is cleared. Triggers the Bidding War immediately.</RuleRow>
+            <RuleSection title="🎯 Step 2 — Preparation Phase">
+              <p className="mb-2">Players take turns claiming <strong className="text-white">Action Spaces</strong>. Each space can only be used once per round. On your turn, choose one.</p>
+              <div className="space-y-1 mb-3">
+                <RuleRow label="Purchase Lumber">6 Gems → 4 Wood (unclaimed spaces stack +4 Wood each round)</RuleRow>
+                <RuleRow label="Purchase Clay">6 Gems → 1 Clay (stacks +1/round)</RuleRow>
+                <RuleRow label="Purchase Stone">6 Gems → 1 Stone (stacks +1/round)</RuleRow>
+                <RuleRow label="Generate Mana">3 Gems per Mana — spend any amount</RuleRow>
+                <RuleRow label="Build Wall">2 Wood — place a Wall on an adjacent owned tile</RuleRow>
+                <RuleRow label="Dig Moat">5 Gems — place a Moat on an adjacent owned tile</RuleRow>
+                <RuleRow label="Build Barracks">6 Wood + 2 Clay — holds 3 heroes; required after your 1st summon</RuleRow>
+                <RuleRow label="Summon Hero">8 Gems + escalating Mana (see Heroes) — draw from hand, choose 1</RuleRow>
+                <RuleRow label="Build Smithy">1 Clay + 2 Stone — required to create gear</RuleRow>
+                <RuleRow label="Create Gear">8 Gems + Smithy owned — draw from hand, equip 1 gear card</RuleRow>
+                <RuleRow label="Build Flagpole">Free — only available after the center tile is cleared; triggers Bidding War</RuleRow>
+              </div>
+              <RuleRow label="Secondary spaces">With 3+ players, extra slots unlock for Summon, Gear, Stone, and Lumber to prevent bottlenecks.</RuleRow>
+              <RuleRow label="Stacking tip">Resources on unclaimed spaces accumulate each round — letting an opponent claim a space early means you collect a larger stack later.</RuleRow>
             </RuleSection>
 
-            <RuleSection title="🏗 Structures">
-              <RuleRow label="Gate 🏰">Your starting structure. Indestructible. Costs attacker +4 Mana to capture.</RuleRow>
-              <RuleRow label="Wall 🧱">Costs attacker +6 damage to breach (Stone Wall upgrade: +10 damage). All enemy tiles also have a base 2 damage resistance.</RuleRow>
-              <RuleRow label="Moat 🌊">Costs attacker +8 damage to breach (upgraded: +12 damage). All enemy tiles also have a base 2 damage resistance.</RuleRow>
-              <RuleRow label="Barracks 🛡">Each holds 3 heroes. You must have free Barracks capacity before summoning a 2nd+ hero (first summon ever is free).</RuleRow>
-              <RuleRow label="Smithy 🔨">Required to use the Create Gear action.</RuleRow>
-              <RuleRow label="Flagpole 🚩">Placed at the board centre by the triggering player. Initiates the Bidding War.</RuleRow>
+            <RuleSection title="🦸 Heroes & Summoning">
+              <RuleRow label="First summon">Your very first summon ever is <strong className="text-white">free</strong> — no Gem cost, no Mana, no Barracks needed.</RuleRow>
+              <RuleRow label="Subsequent summons">Cost 8 Gems + escalating Mana: 2nd summon = 1 Mana, 3rd = 2 Mana, 4th = 3 Mana, etc. — resets each round.</RuleRow>
+              <RuleRow label="Barracks capacity">Each Barracks holds <strong className="text-white">3 heroes</strong>. You cannot summon beyond your capacity (except via Mercenary Contract).</RuleRow>
+              <RuleRow label="Levelling up">Summoning a hero you already own <strong className="text-white">upgrades it to Level 2</strong> instead of adding a copy — boosting damage or effect significantly.</RuleRow>
+              <RuleRow label="Deck refresh">After every 6th hero summoned, draw 6 new cards (with at least 1 Epic guaranteed).</RuleRow>
+              <RuleRow label="10th summon bonus">Every 10th total summon rewards a random <strong className="text-white">Special Hero</strong> (Ignis, Seraphina, Mordecai, or Goliath) if Barracks space is available.</RuleRow>
+              <RuleRow label="Ready / Spent">Green = hero can act this turn. Red = ability already used. All heroes reset at the start of each Preparation Phase.</RuleRow>
+              <RuleRow label="Occupation">Heroes with an Occupy ability place a token on a tile instead of dealing damage — that tile counts as yours and is protected from monster reclamation.</RuleRow>
+              <p className="mt-2 font-bold text-white/80 text-[12px] uppercase tracking-wider">Hero Roster</p>
+              <div className="mt-1 space-y-0.5 text-[12px]">
+                <p className="text-white/50 italic mb-1">Normal Heroes (deal 1–2 dmg or utility; Level 2 improves effect)</p>
+                <RuleRow label="Ash">1 dmg to adjacent monster (Lv2: 2)</RuleRow>
+                <RuleRow label="Brog">2 dmg to adjacent monster (Lv2: 3)</RuleRow>
+                <RuleRow label="Kael">1 dmg to <em>any</em> monster on the board</RuleRow>
+                <RuleRow label="Dax">+2 bonus dmg vs Giants, Dragons, and Demon King</RuleRow>
+                <RuleRow label="Slink">Steal 2 gems from an adjacent player</RuleRow>
+                <RuleRow label="Lina">Next hero attack deals +1 damage (then resets)</RuleRow>
+                <RuleRow label="Orion">Swap positions of any 2 monsters on the board</RuleRow>
+                <RuleRow label="Tess">Reveal HP of all monsters in a 3×3 area</RuleRow>
+                <RuleRow label="Niles">Gain 3 gems when an adjacent monster is defeated</RuleRow>
+                <RuleRow label="Eliza / Mura / Pip">Occupy 1 tile (Pip ignores Moats)</RuleRow>
+                <RuleRow label="Vera">Refresh another hero’s spent ability (Prep)</RuleRow>
+                <RuleRow label="Cora">Enemies attacking this tile must spend +1 Mana (Prep)</RuleRow>
+                <RuleRow label="Finley">Reduce wall build cost by 1 Wood this round (Prep)</RuleRow>
+                <RuleRow label="Grog">Gain 1 Stone if occupying a cleared tile (Prep)</RuleRow>
+                <RuleRow label="Boff">Repair a destroyed structure for 1 Wood (Prep)</RuleRow>
+                <RuleRow label="Bryn">Gain 1 Stone at start of each Prep Phase</RuleRow>
+                <RuleRow label="Zale">Gain 2 gems if adjacent to a Moat (Prep)</RuleRow>
+                <p className="text-white/50 italic mt-2 mb-1">Epic Heroes (stronger baseline; guaranteed in first draw)</p>
+                <RuleRow label="Azul / Night">4 dmg to adjacent monster (Lv2: 6)</RuleRow>
+                <RuleRow label="Trove">Gain 4 Gemstones each Prep Phase</RuleRow>
+                <RuleRow label="Ewud">Build one free Wall (Prep)</RuleRow>
+                <RuleRow label="Alcie">Convert 1 resource into 1 each of the other 3 types (Prep)</RuleRow>
+                <p className="text-white/50 italic mt-2 mb-1">Legendary Hero</p>
+                <RuleRow label="Hero of the Dungeon">5 dmg to <em>each</em> of 2 adjacent monsters simultaneously (Lv2: 8)</RuleRow>
+                <p className="text-white/50 italic mt-2 mb-1">Special Heroes (awarded at 10th summon)</p>
+                <RuleRow label="Ignis">6 dmg + build a free Wall on that tile (Lv2: 8)</RuleRow>
+                <RuleRow label="Seraphina">Spend 1 Mana → occupy 2 non-adjacent cleared tiles</RuleRow>
+                <RuleRow label="Mordecai">7 dmg; if monster survives, stun it (+2 dmg on next hit) (Lv2: 12)</RuleRow>
+                <RuleRow label="Goliath">Occupy 3 orthogonally adjacent tiles at once</RuleRow>
+              </div>
             </RuleSection>
 
-            <RuleSection title="🦸 Heroes">
-              <RuleRow label="Summoning">Use Summon Hero action. Your first-ever summon is free of Barracks & Mana requirements. Each additional summon this round costs +1 Mana.</RuleRow>
-              <RuleRow label="Using in battle">During Attack phase: select a Ready hero from Active Heroes, then click a target tile.</RuleRow>
-              <RuleRow label="Refreshing">Certain cards (Vera, Medkit) can refresh a Spent hero’s ability. Select the refresher card first, then click the Spent hero.</RuleRow>
-              <RuleRow label="Ready / Spent">A green Ready badge means the hero can attack. Red Spent means they've already acted this round. Abilities reset at start of each Preparation phase.</RuleRow>
-              <RuleRow label="Occupy ability">Heroes with "Occupy" in their ability text can hold tiles, preventing monster reclamation at round end.</RuleRow>
-              <RuleRow label="Levelling">Drafting the same hero name a second time upgrades their existing card to Level 2, boosting their damage or effect.</RuleRow>
-              <RuleRow label="10th summon bonus">Every 10 total hero summons awards a bonus Special Hero if Barracks space is available.</RuleRow>
+            <RuleSection title="⚙️ Gear & Smithy">
+              <RuleRow label="Requirement">You must own a <strong className="text-white">Smithy</strong> to create gear. Cost: 8 Gems per card.</RuleRow>
+              <RuleRow label="Deck refresh">After every 6th gear card created, draw 6 new cards.</RuleRow>
+              <p className="mt-2 font-bold text-white/80 text-[12px] uppercase tracking-wider">Offensive Gear</p>
+              <div className="mt-1 space-y-0.5 text-[12px]">
+                <RuleRow label="Iron Longsword">+1 damage to one attack</RuleRow>
+                <RuleRow label="Heavy Crossbow">3 damage to a monster up to 2 tiles away</RuleRow>
+                <RuleRow label="Fire Bomb">2 damage to target + all adjacent monsters</RuleRow>
+                <RuleRow label="Slayer’s Axe">+3 damage vs Orcs or Giants</RuleRow>
+                <RuleRow label="Poison Dagger">Target takes 1 damage at end of this round and next</RuleRow>
+                <RuleRow label="War Horn">All your heroes deal +1 damage this Attack Phase</RuleRow>
+                <RuleRow label="Spiked Knuckles">2 damage; gain 2 gems if monster dies</RuleRow>
+                <RuleRow label="Lance">3 damage if a hero moved into this tile this turn</RuleRow>
+                <RuleRow label="Magic Wand">2 damage, spending 1 Mana instead of an action</RuleRow>
+                <RuleRow label="Ballista">Place on a Wall; auto-deals 2 damage to monsters in line of sight</RuleRow>
+              </div>
+              <p className="mt-2 font-bold text-white/80 text-[12px] uppercase tracking-wider">Defensive & Utility Gear</p>
+              <div className="mt-1 space-y-0.5 text-[12px]">
+                <RuleRow label="Tower Shield">Your occupying hero cannot be removed by Dragon/Demon effects</RuleRow>
+                <RuleRow label="Monster Bait">Move an adjacent monster to your current tile</RuleRow>
+                <RuleRow label="Plated Boots">Your hero may occupy a Moat tile</RuleRow>
+                <RuleRow label="Spyglass">Look at the top 3 cards of the Hero Deck (Prep)</RuleRow>
+                <RuleRow label="Mining Pick">Spend 1 Mana → gain 2 Stone (Prep)</RuleRow>
+                <RuleRow label="Trowel">Spend 1 Mana → gain 2 Clay (Prep)</RuleRow>
+                <RuleRow label="Lumber Axe">Spend 1 Mana → gain 3 Wood (Prep)</RuleRow>
+                <RuleRow label="Medkit">Reset one hero’s or gear’s ability immediately</RuleRow>
+                <RuleRow label="Caltrops">Monsters reclaiming your tiles start with −2 HP</RuleRow>
+                <RuleRow label="Reinforced Bricks">Your Walls require +2 additional damage to breach</RuleRow>
+              </div>
+              <p className="mt-2 font-bold text-white/80 text-[12px] uppercase tracking-wider">Economic & Strategic Gear</p>
+              <div className="mt-1 space-y-0.5 text-[12px]">
+                <RuleRow label="Merchant’s Scale">Trade resources 1:1 with the bank once per turn (Prep)</RuleRow>
+                <RuleRow label="Golden Compass">Gain 5 gems if you occupy a corner tile (Prep)</RuleRow>
+                <RuleRow label="Mana Ring">Gain 1 Mana at start of each Attack Phase</RuleRow>
+                <RuleRow label="Contract">Reduce your next hero summon cost by 3 gems (Prep)</RuleRow>
+                <RuleRow label="Smithy Tools">Reduce your next gear creation cost by 3 gems (Prep)</RuleRow>
+                <RuleRow label="Tax Box">Gain +1 gem per controlled tile during Income (Prep)</RuleRow>
+                <RuleRow label="Blueprints">Build any structure without using an Action Space (Prep)</RuleRow>
+                <RuleRow label="Pouch of Holding">Carry up to 5 unused Mana into the next round (Prep)</RuleRow>
+                <RuleRow label="Bribe Letter">Pay 5 gems to skip a monster and immediately occupy its tile</RuleRow>
+                <RuleRow label="King’s Decree">+10 to your bid value in the Bidding War</RuleRow>
+              </div>
             </RuleSection>
 
-            <RuleSection title="⚙️ Gear">
-              <RuleRow label="Creating">Create Gear action space + a Smithy on your territory. Pull a Gear card from your Drafted Hand into active slots.</RuleRow>
-              <RuleRow label="Offensive">Iron Longsword (+1 dmg), Heavy Crossbow (3 dmg at range), Slayer's Axe (+3 vs Orcs/Giants), War Horn (+1 all heroes this phase), and more.</RuleRow>
-              <RuleRow label="Defensive / Utility">Tower Shield (protect occupying hero), Monster Bait (reposition monsters), Plated Boots (ignore Moats), Medkit (refresh a hero ability).</RuleRow>
-              <RuleRow label="Economic">Contract (–3 Gem summon cost), Smithy Tools (–3 Gem gear cost), Tax Box (+1 Gem per tile/round), Mana Ring (+1 Mana per Attack phase), Merchant's Scale (trade any resource 1:1 once/turn).</RuleRow>
-              <RuleRow label="Strategic">King's Decree (+10 Gem value in Bidding War), Pouch of Holding (carry 5 unused Mana to next round), Bribe Letter (skip a monster tile for 5 Gems).</RuleRow>
+            <RuleSection title="🗡 Step 3 — Attack Phase">
+              <p className="mb-2">Players take turns activating hero and gear abilities. Each hero may act <strong className="text-white">once per turn</strong>.</p>
+              <RuleRow label="Attacking monsters">Choose a hero → click an adjacent monster tile. Reduce its HP by the hero’s damage. At 0 HP: claim the tile and earn <strong className="text-white">3 Gems</strong>.</RuleRow>
+              <RuleRow label="Adjacency rule">You can only target tiles orthogonally adjacent to tiles you already control.</RuleRow>
+              <RuleRow label="Mana attacks">Spend Mana directly for damage: 1 Mana = 1 damage to an adjacent monster. Useful for finishing off tough monsters.</RuleRow>
+              <RuleRow label="Attacking enemy tiles">Enemy tiles have a <strong className="text-white">Defense Pool</strong> based on structures:</RuleRow>
+              <div className="ml-2 mt-1 mb-2 space-y-0.5 text-[12px]">
+                <div className="flex gap-3"><span className="text-yellow-300/70 w-36">Base (no structure)</span><span>2 HP</span></div>
+                <div className="flex gap-3"><span className="text-yellow-300/70 w-36">Wall (Level 1)</span><span>8 HP (10 with Reinforced Bricks)</span></div>
+                <div className="flex gap-3"><span className="text-yellow-300/70 w-36">Wall (Level 2)</span><span>12 HP (14 with Reinforced Bricks)</span></div>
+                <div className="flex gap-3"><span className="text-yellow-300/70 w-36">Moat (Level 1)</span><span>10 HP</span></div>
+                <div className="flex gap-3"><span className="text-yellow-300/70 w-36">Moat (Level 2)</span><span>14 HP</span></div>
+                <div className="flex gap-3"><span className="text-yellow-300/70 w-36">Gate</span><span>Cannot be damaged — bypass with 4 Mana</span></div>
+              </div>
+              <RuleRow label="Capture reward">Successfully depleting a tile’s Defense Pool earns <strong className="text-white">+5 Gems</strong> and transfers ownership.</RuleRow>
+              <RuleRow label="Damage modifiers">Iron Longsword +1 · Slayer’s Axe +3 vs Orcs/Giants · Dax +2 vs Giants+ · War Horn +1 all heroes this phase · Lina buff +1 next attack · Stun (Mordecai) +2 on stunned target · Poison: 1 dmg/round for 2 rounds</RuleRow>
+              <RuleRow label="Bonus Card trigger">Earn 1 Bonus Card if you defeat <strong className="text-white">3+ monsters</strong> OR capture <strong className="text-white">3+ enemy tiles</strong> in one Attack Phase (max 1 card per phase).</RuleRow>
+              <RuleRow label="! Liberated tiles">A red <strong className="text-red-400">!</strong> badge marks tiles you own with no structure and no occupying hero — these <strong className="text-white">will be reclaimed</strong> at end of round. Fortify them or station an Occupy-ability hero.</RuleRow>
             </RuleSection>
 
             <RuleSection title="⭐ Bonus Cards">
-              <RuleRow label="Earning">Capture your <strong className="text-white">3rd enemy tile</strong> in one Attack phase. Maximum 1 Bonus Card earned per Attack phase. Monster kills do <em>not</em> count toward this threshold — only seizing tiles that belonged to another player does.</RuleRow>
-              <RuleRow label="Cost">Free — no Gems required to play.</RuleRow>
-              <div className="mt-3 space-y-1">
-                <RuleRow label="Mercenary Contract">Prep. Summon 1 hero from your Drafted Hand for free (0 Gems, 0 Mana), ignoring Barracks limit. Select the hero card first.</RuleRow>
-                <RuleRow label="Reinforced Caravan">Prep. Instantly gain 4 Wood, 2 Clay, and 1 Stone.</RuleRow>
-                <RuleRow label="Hidden Cache">Prep. Gain 15 Gemstones. Great surprise for Bidding War.</RuleRow>
-                <RuleRow label="Siege Engineering">Prep. Click a tile you own, then play — builds a free Wall or Moat, uses no Action Space.</RuleRow>
-                <RuleRow label="Monster Tamer">Attack (your turn). Click an adjacent monster tile, then play — defeats it instantly and awards the tile and 3 Gems.</RuleRow>
-                <RuleRow label="Forced Occupation">Attack (your turn). Click any cleared, unoccupied tile on the board, then play — places a 2-round token counting as your territory.</RuleRow>
-              </div>
-            </RuleSection>
-
-            <RuleSection title="🗡 Combat">
-              <RuleRow label="Monster attacks">Select a monster tile → click a Ready hero → hero deals damage. If HP hits 0 you claim the tile (+3 Gems).</RuleRow>
-              <RuleRow label="Mana attacks">Select a monster tile → set Mana amount → click Attack. Each Mana = 2 damage.</RuleRow>
-              <RuleRow label="Enemy tiles">Select a ready hero, then click an adjacent enemy tile. Base 2 defense HP (+6/+10 for Wall, +8/+12 for Moat). Deplete the defense HP to claim it (+5 Gems from the old owner). Gates still require 4 Mana.</RuleRow>
-              <RuleRow label="Adjacency rule">You can only target tiles immediately next to (orthogonally adjacent to) tiles you already control.</RuleRow>
-              <RuleRow label="Monster HP">Goblin 2 · Orc 5 · Giant 8 · Dragon 14 · Demon King 22. Stronger monsters ring the centre.</RuleRow>
-              <RuleRow label="Reclamation">At round end, unoccupied, structureless non-starting tiles revert to random monsters.</RuleRow>
-              <RuleRow label="! Liberated tiles">
-                A small red <strong className="text-red-400">!</strong> badge in the top-left corner of a tile means it is <strong className="text-white">liberated</strong> — you own it, but it has no structure and no occupying hero. These tiles <strong className="text-white">will be reclaimed by monsters</strong> at the beginning of the next Attack phase. Secure them with a structure or an Occupy-ability hero to keep them.
-              </RuleRow>
-            </RuleSection>
-
-            <RuleSection title="🏆 Victory — Bidding War">
-              <p>Once centre tile 40 has no monsters, any player may use <strong className="text-white">Build Flagpole</strong> on their Preparation turn to trigger the Bidding War.</p>
+              <RuleRow label="How to earn">Defeat 3+ monsters OR capture 3+ enemy tiles in one Attack Phase. Max 1 per phase. All Bonus Cards are free to play.</RuleRow>
               <div className="mt-2 space-y-1">
-                <RuleRow label="Entry requirement">3 Wood and 1 Stone minimum. Without these your bid is disqualified.</RuleRow>
-                <RuleRow label="Bid value">All current Gemstones + 10 bonus if you hold King's Decree.</RuleRow>
-                <RuleRow label="Winner">Highest valid bid. Ties broken by raw Gemstone count, then player ID. Winner plants the Flagpole and claims the title.</RuleRow>
+                <RuleRow label="Mercenary Contract">Summon 1 hero free (0 Gems, 0 Mana), ignoring Barracks limit.</RuleRow>
+                <RuleRow label="Reinforced Caravan">Instantly gain 4 Wood, 2 Clay, and 1 Stone.</RuleRow>
+                <RuleRow label="Hidden Cache">Gain 15 Gemstones — powerful Bidding War trump card.</RuleRow>
+                <RuleRow label="Siege Engineering">Build a free Wall or Moat on a cleared tile, no Action Space needed.</RuleRow>
+                <RuleRow label="Monster Tamer">Instantly defeat an adjacent monster — claim tile and earn 3 Gems, no damage roll needed.</RuleRow>
+                <RuleRow label="Forced Occupation">Place an Occupation Token on any cleared, unowned tile. Counts as your territory for 2 rounds, then expires.</RuleRow>
               </div>
             </RuleSection>
 
-            <RuleSection title="💡 Strategy Tips">
-              <p>• Build a Barracks early — after your first free summon you cannot recruit more heroes without Barracks capacity.</p>
-              <p>• Unclaimed action spaces stack resources. Let opponents bleed Gems taking spaces early; collect a fat Wood stack later for free.</p>
-              <p>• Mana is the scarcest resource. Save it for fortified enemy tiles or sequential hero summons, not routine monster clearing.</p>
-              <p>• Aggressively raid enemy territories — capturing 3 opponent tiles in one Attack phase earns you a Bonus Card, some of the strongest plays in the game.</p>
-              <p>• Hidden Cache (15 Gems) can swing a Bidding War. Hold it as a trump card and reveal it at the last moment.</p>
-              <p>• Occupy-ability heroes lock tiles against monster reclamation — essential for holding deep, structureless territory.</p>
-              <p>• Always keep 3 Wood and 1 Stone on hand. The Bidding War can trigger without warning.</p>
-              <p>• Drafting is universal — Heroes and Gear are pulled from the same pool. Balance your deck so you have enough muscle to expand and enough utility to maintain your lead.</p>
+            <RuleSection title="🏗 Structures">
+              <div className="space-y-1">
+                <RuleRow label="Wall 🧱">Build: 2 Wood. Defense: +6 HP (Level 2: +10). Upgrade with 1 Stone. Reinforced Bricks gear adds +2 HP per tier.</RuleRow>
+                <RuleRow label="Moat 🌊">Build: 5 Gems. Defense: +8 HP (Level 2: +12). Most heroes cannot pass through or occupy a Moat (exception: Pip, Plated Boots).</RuleRow>
+                <RuleRow label="Barracks 🛡">Build: 6 Wood + 2 Clay. Holds 3 heroes. Required for hero capacity beyond your 1st free summon.</RuleRow>
+                <RuleRow label="Smithy 🔨">Build: 1 Clay + 2 Stone. Required to use the Create Gear action.</RuleRow>
+                <RuleRow label="Gate 🏰">Indestructible by heroes. Enemies must spend 4 Mana to bypass it.</RuleRow>
+                <RuleRow label="Flagpole 🚩">Built only on the cleared center tile. Instantly triggers the Bidding War endgame.</RuleRow>
+              </div>
+            </RuleSection>
+
+            <RuleSection title="🏆 Endgame — Bidding War">
+              <p className="mb-2">The game ends when any player builds the <strong className="text-white">Flagpole</strong> on the cleared center tile. This triggers the <strong className="text-white">Bidding War</strong>.</p>
+              <RuleRow label="How to qualify">You must have at least <strong className="text-white">3 Wood + 1 Stone</strong>. Without them, your bid is disqualified.</RuleRow>
+              <RuleRow label="Bid value">Your total current Gemstones. King’s Decree gear adds <strong className="text-white">+10</strong> to your bid.</RuleRow>
+              <RuleRow label="Winner">Highest valid bid wins the game. Tiebreaker: most raw Gemstones, then earliest player index.</RuleRow>
+              <RuleRow label="No valid bids">If no player meets the minimum requirement, the Bidding War fails, the Flagpole is removed, and the game continues.</RuleRow>
+              <p className="mt-2 text-white/50 text-[11px]">Strategy: Hoard resources near endgame. A surprise Hidden Cache (+15 Gems) can flip the result. King’s Decree is most valuable if held until the final bid.</p>
+            </RuleSection>
+
+            <RuleSection title="🤖 Solo Mode">
+              <RuleRow label="Objective">Play against AI opponents. Build the Flagpole before Round 20, or score the most Gemstones when time runs out.</RuleRow>
+              <RuleRow label="AI bots">Bots are named Grim, Zara, Vex, Nix, Dusk, Mora, Kade, and Lyra. They draft, build, and attack intelligently.</RuleRow>
+              <RuleRow label="Round limit">After Round 20, the game ends automatically and your final Gemstone count is your score.</RuleRow>
+            </RuleSection>
+
+            <RuleSection title="📋 Quick Reference">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-0.5 text-[12px]">
+                <RuleRow label="Board">9×9 grid (81 tiles)</RuleRow>
+                <RuleRow label="Starting tiles">3 per player</RuleRow>
+                <RuleRow label="Starting gems">6</RuleRow>
+                <RuleRow label="Monster kill">+3 Gems</RuleRow>
+                <RuleRow label="Enemy capture">+5 Gems</RuleRow>
+                <RuleRow label="Free 1st summon">Always (no cost)</RuleRow>
+                <RuleRow label="Barracks capacity">3 heroes each</RuleRow>
+                <RuleRow label="Summon mana cost">+1 Mana per extra summon/round</RuleRow>
+                <RuleRow label="Deck refresh">Every 6 heroes or gear cards</RuleRow>
+                <RuleRow label="10th summon bonus">1 random Special Hero</RuleRow>
+                <RuleRow label="Bonus Card trigger">3+ kills or 3+ captures in Attack Phase</RuleRow>
+                <RuleRow label="Poison damage">1 per round for 2 rounds</RuleRow>
+                <RuleRow label="Stun bonus">+2 on next attack</RuleRow>
+                <RuleRow label="Bidding War entry">3 Wood + 1 Stone minimum</RuleRow>
+                <RuleRow label="Solo round limit">20 rounds</RuleRow>
+              </div>
             </RuleSection>
 
           </div>
