@@ -13,7 +13,7 @@ async function startServer() {
     cors: { origin: "*" },
   });
 
-  const PORT = process.env.PORT || 8080;
+  const PORT = Number(process.env.PORT) || 8080;
   const games = new Map<string, any>();
 
   function shuffle(array: any[]) {
@@ -99,6 +99,12 @@ async function startServer() {
   function saveCurrentTurnSnapshot(game: any) {
     const { currentTurnSnapshot: _snap, ...rest } = game;
     game.currentTurnSnapshot = JSON.parse(JSON.stringify(rest));
+  }
+
+  /** Increment global action turn counter and prefix a log message with [Turn X]. */
+  function logTurn(game: any, message: string) {
+    game.turnNumber = (game.turnNumber || 0) + 1;
+    game.logs.push(`[Turn ${game.turnNumber}] ${message}`);
   }
 
   function calculateIncome(tilesCount: number) {
@@ -246,6 +252,24 @@ async function startServer() {
             }
           }
 
+          // Pouch of Holding: without Pouch, mana resets to 0 at end of round.
+          // With Pouch equipped, up to 5 mana carries over to the next round.
+          if (!p.gear.some((g: any) => g.id === "g_pouch")) {
+            if (p.mana > 0) {
+              game.logs.push(`${p.name}'s unused mana (${p.mana}) expired. (Equip Pouch of Holding to carry over up to 5 Mana.)`);
+              p.mana = 0;
+            }
+          } else {
+            // Pouch: carry over up to 5 mana; discard anything above 5
+            const carried = Math.min(5, p.mana);
+            if (p.mana > 5) {
+              game.logs.push(`${p.name}'s Pouch of Holding carried over 5 Mana (${p.mana - 5} excess lost).`);
+            } else if (p.mana > 0) {
+              game.logs.push(`${p.name}'s Pouch of Holding carried over ${carried} Mana to the next round.`);
+            }
+            p.mana = carried;
+          }
+
           p.finishedPrep = false; // Reset for next round
           p.heroes.forEach((h: any) => h.abilityUsed = false);
           p.gear.forEach((g: any) => g.abilityUsed = false);
@@ -311,7 +335,14 @@ async function startServer() {
 
         game.logs.push(`Round ${game.round} begins. Preparation phase.`);
       } else {
-        // Still in ATTACK phase — save snapshot for the next player's turn
+        // Still in ATTACK phase — reset the incoming player's abilities so they can attack
+        const nextPlayer = game.players[game.currentPlayerIndex];
+        nextPlayer.heroes.forEach((h: any) => h.abilityUsed = false);
+        nextPlayer.gear.forEach((g: any) => g.abilityUsed = false);
+        // Also reset attack-phase buff flags for the incoming player
+        nextPlayer.linaBuff = false;
+        nextPlayer.hornBuff = false;
+        // Save snapshot for the next player's turn
         saveCurrentTurnSnapshot(game);
       }
     }
@@ -377,22 +408,32 @@ async function startServer() {
               bot.ready = true;
               g.logs.push(`${bot.name} [BOT] drafted gear: ${chosen.name}`);
             }
-            // Rotate hands
-            const heroHands = g.players.map((p2: any) => p2.draftHeroHand);
-            const gearHands = g.players.map((p2: any) => p2.draftGearHand);
-            // Check if all ready
-            const allEmpty = g.players.every((p2: any) =>
-              p2.ready || (p2.draftHeroHand.length === 0 && p2.draftGearHand.length === 0)
-            );
-            if (allEmpty || g.players.every((p2: any) => p2.ready)) {
-              g.status = Phase.PREPARATION;
-              g.currentPlayerIndex = 0;
-              g.players.forEach((p2: any) => {
+            // Rotate hands clockwise (same logic as human draft_card handler)
+            if (g.players.every((p2: any) => p2.ready)) {
+              const heroHands = g.players.map((p2: any) => p2.draftHeroHand);
+              const gearHands = g.players.map((p2: any) => p2.draftGearHand);
+              g.players.forEach((p2: any, i: number) => {
+                p2.draftHeroHand = heroHands[(i + 1) % heroHands.length];
+                p2.draftGearHand = gearHands[(i + 1) % gearHands.length];
+                p2.draftedHero = false;
+                p2.draftedGear = false;
+                p2.draftStep = "hero";
                 p2.ready = false;
-                p2.gemstones += calculateIncome(p2.tilesCount);
-                p2.finishedPrep = false;
               });
-              g.logs.push("Drafting complete. Preparation phase begins!");
+              // Are all hands now exhausted?
+              const allEmpty = g.players.every(
+                (p2: any) => p2.draftHeroHand.length === 0 && p2.draftGearHand.length === 0
+              );
+              if (allEmpty) {
+                g.status = Phase.PREPARATION;
+                g.currentPlayerIndex = 0;
+                g.players.forEach((p2: any) => {
+                  p2.ready = false;
+                  p2.gemstones += calculateIncome(p2.tilesCount);
+                  p2.finishedPrep = false;
+                });
+                g.logs.push("Drafting complete. Preparation phase begins!");
+              }
             }
             io.to(roomId).emit("game_updated", g);
             scheduleBot(g, roomId);
@@ -561,12 +602,21 @@ async function startServer() {
       const hero = readyHeroes[0];
 
       if (target) {
-        // Calculate damage (matches server attack logic)
-        let damage = 1;
+        // Full hero damage table (mirrors attack_tile server logic)
+        let damage = 0;
+        if (hero.id.startsWith("ash")) damage = hero.level === 1 ? 1 : 2;
         if (hero.id.startsWith("brog")) damage = hero.level === 1 ? 2 : 3;
+        if (hero.id.startsWith("kael")) damage = hero.level === 1 ? 1 : 2;
         if (hero.id.startsWith("azul")) damage = hero.level === 1 ? 4 : 6;
+        if (hero.id.startsWith("night")) damage = hero.level === 1 ? 4 : 6;
         if (hero.id.startsWith("ignis")) damage = hero.level === 1 ? 6 : 8;
         if (hero.id.startsWith("mordecai")) damage = hero.level === 1 ? 7 : 12;
+        if (hero.id.startsWith("hero_leg")) damage = hero.level === 1 ? 5 : 8;
+        if (hero.id.startsWith("dax")) {
+          damage = hero.level === 1 ? 1 : 2;
+          if (target.monsterType === MonsterType.GIANT || target.monsterType === MonsterType.DRAGON || target.monsterType === MonsterType.DEMON_KING) damage += 2;
+        }
+        if (damage === 0) damage = 1; // fallback for non-damage heroes
 
         if (target.monsterType !== null) {
           target.monsterHP -= damage;
@@ -578,18 +628,28 @@ async function startServer() {
             target.monsterType = null;
             target.monsterHP = 0;
             target.monsterMaxHP = 0;
-            target.isOccupied = true;
+            target.isOccupied = false; // liberated, not occupied
             bot.tilesCount++;
+            bot.gemstones += 3; // monster defeat gem reward
             g.logs.push(`${bot.name} [BOT] captured tile ${target.id}!`);
-
-            // (Bonus cards are earned from enemy tile captures, not monster kills)
           }
         } else {
-          // Enemy tile — simplified: instant capture attempt with damage resistance
-          target.monsterHP = (target.monsterHP || 0) + damage;
+          // Enemy tile — deplete defense HP, then capture
+          // Correct level-based defense thresholds (mirrors server attack_tile logic)
+          if (target.monsterHP === 0) {
+            let defense = 2;
+            if (target.structure === StructureType.WALL) defense += target.level === 1 ? 6 : 10;
+            if (target.structure === StructureType.MOAT) defense += target.level === 1 ? 8 : 12;
+            const prevOwnerForBricks = g.players.find((p: any) => p.id === target.ownerId);
+            if (target.structure === StructureType.WALL && target.level === 2 &&
+              prevOwnerForBricks?.gear?.some((gg: any) => gg.id === "g_bricks")) defense += 2;
+            target.monsterHP = defense;
+            target.monsterMaxHP = defense;
+          }
+          target.monsterHP -= damage;
           hero.abilityUsed = true;
-          const threshold = target.structure === StructureType.WALL ? 8 : target.structure === StructureType.MOAT ? 12 : 2;
-          if (target.monsterHP >= threshold) {
+          const threshold = target.monsterMaxHP || 2;
+          if (target.monsterHP <= 0) {
             const prevOwner = g.players.find((p: any) => p.id === target.ownerId);
             if (prevOwner) prevOwner.tilesCount--;
             target.ownerId = bot.id;
@@ -598,9 +658,10 @@ async function startServer() {
             target.monsterMaxHP = 0;
             target.isOccupied = true;
             bot.tilesCount++;
+            bot.gemstones += 5; // enemy tile capture gem reward
             g.logs.push(`${bot.name} [BOT] captured enemy tile ${target.id}!`);
           } else {
-            g.logs.push(`${bot.name} [BOT]: ${hero.name} dealt ${damage} dmg to enemy tile ${target.id} (${threshold - target.monsterHP} more needed).`);
+            g.logs.push(`${bot.name} [BOT]: ${hero.name} dealt ${damage} dmg to enemy tile ${target.id} (${target.monsterHP} defense HP remaining).`);
           }
         }
 
@@ -691,6 +752,7 @@ async function startServer() {
           }),
           currentPlayerIndex: 0,
           round: 1,
+          turnNumber: 0,
           logs: [],
           actionSpaces: [
             { id: "p_lumber", used: false, type: "PRIMARY", label: "Purchase Lumber (4)", cost: 6, reward: { wood: 4 } },
@@ -1158,7 +1220,7 @@ async function startServer() {
       }
 
       action.used = true;
-      game.logs.push(`${player.name} performed: ${action.label}`);
+      logTurn(game, `${player.name} performed: ${action.label}`);
 
       advanceTurn(game);
       io.to(roomId).emit("game_updated", game);
@@ -1212,7 +1274,7 @@ async function startServer() {
 
       player.wood -= woodNeeded;
       action.used = true;
-      game.logs.push(`${player.name} built ${ids.length} Wall${ids.length > 1 ? "s" : ""} — paid ${woodNeeded} Wood.`);
+      logTurn(game, `${player.name} built ${ids.length} Wall${ids.length > 1 ? "s" : ""} — paid ${woodNeeded} Wood.`);
 
       advanceTurn(game);
       io.to(roomId).emit("game_updated", game);
@@ -1341,6 +1403,16 @@ async function startServer() {
 
         // Occupy if not used and hero has ability
         if (!hero.abilityUsed && hero.ability.toLowerCase().includes("occupy")) {
+          // Plated Boots required to occupy a Moat tile
+          if (tile.structure === StructureType.MOAT) {
+            const hasBoots = player.gear.some((g: any) => g.id === "g_boots");
+            if (!hasBoots) {
+              game.logs.push(`${player.name}: Plated Boots are required to occupy a Moat tile!`);
+              io.to(roomId).emit("game_updated", game);
+              return;
+            }
+          }
+
           // If already occupied by another hero, free that hero first
           if (tile.occupiedByHeroId) {
             const otherHero = player.heroes.find((h: any) => h.id === tile.occupiedByHeroId);
@@ -1350,7 +1422,7 @@ async function startServer() {
           tile.isOccupied = true;
           tile.occupiedByHeroId = heroId;
           hero.abilityUsed = true;
-          game.logs.push(`${player.name}'s ${hero.name} occupied tile ${tileId}.`);
+          logTurn(game, `${player.name}'s ${hero.name} occupied tile ${tileId}.`);
           io.to(roomId).emit("game_updated", game);
         }
         return;
@@ -1423,7 +1495,7 @@ async function startServer() {
 
         tile.monsterHP -= damage;
         hero.abilityUsed = true;
-        game.logs.push(`${player.name}'s ${hero.name} dealt ${damage} damage to the ${tile.monsterType}!`);
+        logTurn(game, `${player.name}'s ${hero.name} dealt ${damage} damage to the ${tile.monsterType}!`);
 
         // Mordecai: stun the monster if it survives
         if (hero.id.startsWith("mordecai") && tile.monsterHP > 0) {
@@ -1548,7 +1620,7 @@ async function startServer() {
 
           tile.monsterHP -= damage;
           hero.abilityUsed = true;
-          game.logs.push(
+          logTurn(game,
             `${player.name}'s ${hero.name} dealt ${damage} damage to ${oldOwner?.name}'s tile ${tileId}! ` +
             `(${Math.max(0, tile.monsterHP)} defense HP remaining)`
           );
@@ -1652,7 +1724,7 @@ async function startServer() {
 
       // Apply damage to tile 1
       tile1.monsterHP -= damage;
-      game.logs.push(`${player.name}'s ${hero.name} deals ${damage} damage to the ${tile1.monsterType} on tile ${tileId1}!`);
+      logTurn(game, `${player.name}'s ${hero.name} deals ${damage} damage to the ${tile1.monsterType} on tile ${tileId1}!`);
       if (tile1.monsterHP <= (tile1.ownerId !== null ? -2 : 0)) {
         tile1.monsterType = null;
         tile1.monsterHP = 0;
@@ -1719,19 +1791,36 @@ async function startServer() {
       const game = games.get(roomId);
       if (!game || game.status !== Phase.ATTACK) return;
 
-      const player = game.players[game.currentPlayerIndex];
-      if (player.id !== socket.id) return;
+      const player = game.players.find((p: any) => p.id === socket.id);
+      if (!player) {
+        // Player not found, likely a stale socket or invalid ID
+        return;
+      }
+
+      if (player.id !== game.players[game.currentPlayerIndex].id) {
+        game.logs.push(`${player.name}: It is not your turn to use Mana Attack.`);
+        io.to(roomId).emit("game_updated", game);
+        return;
+      }
 
       const tile = game.board[tileId];
-      if (tile.monsterType === null) return;
+      if (!tile || tile.monsterType === null) {
+        game.logs.push(`${player.name}: Mana Attack requires a monster tile.`);
+        io.to(roomId).emit("game_updated", game);
+        return;
+      }
 
-      const manaToUse = Math.min(player.mana, Math.max(1, Math.floor(Number(amount) || 1)));
-      if (manaToUse <= 0) return;
+      const manaToUse = Math.max(1, Math.floor(Number(amount) || 1));
+      if (player.mana < manaToUse) {
+        game.logs.push(`${player.name}: not enough Mana! (have ${player.mana}, need ${manaToUse})`);
+        io.to(roomId).emit("game_updated", game);
+        return;
+      }
 
       // Check adjacency
       const x = tileId % 9;
       const y = Math.floor(tileId / 9);
-      const neighbors = [];
+      const neighbors: number[] = [];
       if (x > 0) neighbors.push(tileId - 1);
       if (x < 8) neighbors.push(tileId + 1);
       if (y > 0) neighbors.push(tileId - 9);
@@ -1739,15 +1828,16 @@ async function startServer() {
 
       const hasAdjacent = neighbors.some(n => game.board[n].ownerId === player.id);
       if (!hasAdjacent) {
-        game.logs.push("You can only attack monsters adjacent to your territory!");
+        game.logs.push(`${player.name}: you can only Mana Attack monsters adjacent to your territory!`);
+        io.to(roomId).emit("game_updated", game);
         return;
       }
 
-      const damage = manaToUse * 1;
+      const damage = manaToUse;
       player.mana -= manaToUse;
       tile.monsterHP -= damage;
 
-      game.logs.push(`${player.name} used ${manaToUse} Mana to deal ${damage} damage to the ${tile.monsterType}!`);
+      logTurn(game, `${player.name} used ${manaToUse} Mana to deal ${damage} damage to the ${tile.monsterType}!`);
 
       if (tile.monsterHP <= 0) {
         tile.monsterType = null;
@@ -1788,7 +1878,7 @@ async function startServer() {
       targetHero.abilityUsed = false;
       source.abilityUsed = true;
 
-      game.logs.push(`${player.name} used ${source.name} to refresh the ability of ${targetHero.name}!`);
+      logTurn(game, `${player.name} used ${source.name} to refresh the ability of ${targetHero.name}!`);
 
       io.to(roomId).emit("game_updated", game);
     });
@@ -1822,10 +1912,10 @@ async function startServer() {
         const existingHero = player.heroes.find((h: any) => h.name === hero.name);
         if (existingHero) {
           existingHero.level = Math.min(2, existingHero.level + 1);
-          game.logs.push(`${player.name} played Mercenary Contract and summoned ${hero.name} again — upgraded to Level ${existingHero.level}!`);
+          logTurn(game, `${player.name} played Mercenary Contract and summoned ${hero.name} again — upgraded to Level ${existingHero.level}!`);
         } else {
           player.heroes.push(hero);
-          game.logs.push(`${player.name} played Mercenary Contract and summoned ${hero.name} for free!`);
+          logTurn(game, `${player.name} played Mercenary Contract and summoned ${hero.name} for free!`);
         }
 
         player.summonCountThisRound++;
@@ -1848,7 +1938,7 @@ async function startServer() {
         player.clay += 2;
         player.stone += 1;
         player.bonusCards.splice(cardIdx, 1);
-        game.logs.push(`${player.name} played Reinforced Caravan and gained 4 Wood, 2 Clay, and 1 Stone!`);
+        logTurn(game, `${player.name} played Reinforced Caravan and gained 4 Wood, 2 Clay, and 1 Stone!`);
       }
 
       // ── Hidden Cache (prep phase, free) ─────────────────────────────────────
@@ -1858,7 +1948,7 @@ async function startServer() {
         }
         player.gemstones += 15;
         player.bonusCards.splice(cardIdx, 1);
-        game.logs.push(`${player.name} played Hidden Cache and gained 15 Gemstones!`);
+        logTurn(game, `${player.name} played Hidden Cache and gained 15 Gemstones!`);
       }
 
       // ── Siege Engineering (prep phase, free) ────────────────────────────────
@@ -1877,7 +1967,7 @@ async function startServer() {
         siegeTile.structure = sType;
         siegeTile.isOccupied = true;
         player.bonusCards.splice(cardIdx, 1);
-        game.logs.push(`${player.name} played Siege Engineering and built a ${sType} on tile ${tileId} for free!`);
+        logTurn(game, `${player.name} played Siege Engineering and built a ${sType} on tile ${tileId} for free!`);
       }
 
       // ── Monster Tamer (attack phase, free) ──────────────────────────────────
@@ -1915,7 +2005,7 @@ async function startServer() {
         player.gemstones += 3; // standard tile reward
         // (Bonus cards are earned from enemy tile captures, not monster kills)
         player.bonusCards.splice(cardIdx, 1);
-        game.logs.push(`${player.name} played Monster Tamer and instantly defeated the ${tamerMonsterName} on tile ${tileId}!`);
+        logTurn(game, `${player.name} played Monster Tamer and instantly defeated the ${tamerMonsterName} on tile ${tileId}!`);
       }
 
       // ── Forced Occupation (attack phase, free) ──────────────────────────────
@@ -1938,7 +2028,7 @@ async function startServer() {
         occupyTile.occupationTokenRoundsLeft = 2;
         player.tilesCount++;
         player.bonusCards.splice(cardIdx, 1);
-        game.logs.push(`${player.name} played Forced Occupation on tile ${tileId} for 2 rounds!`);
+        logTurn(game, `${player.name} played Forced Occupation on tile ${tileId} for 2 rounds!`);
       }
 
       else {
@@ -1986,7 +2076,7 @@ async function startServer() {
         targetTile.structure = StructureType.WALL;
         targetTile.isOccupied = true;
         hero.abilityUsed = true;
-        game.logs.push(`${player.name}'s ${hero.name} built a wooden wall on tile ${tileId}.`);
+        logTurn(game, `${player.name}'s ${hero.name} built a wooden wall on tile ${tileId}.`);
       }
 
       // Lina: buff the next hero attack this phase with +1 damage (Attack phase)
@@ -2001,7 +2091,7 @@ async function startServer() {
         }
         player.linaBuff = true;
         hero.abilityUsed = true;
-        game.logs.push(`${player.name}'s Lina lit a torch — the next hero attack deals +1 damage!`);
+        logTurn(game, `${player.name}'s Lina lit a torch — the next hero attack deals +1 damage!`);
       }
 
       // Orion: swap the positions of 2 monsters (Attack phase, needs tileId + tileId2)
@@ -2026,7 +2116,7 @@ async function startServer() {
         t1.monsterType = t2.monsterType; t1.monsterHP = t2.monsterHP; t1.monsterMaxHP = t2.monsterMaxHP;
         t2.monsterType = swap.type; t2.monsterHP = swap.hp; t2.monsterMaxHP = swap.maxHp;
         hero.abilityUsed = true;
-        game.logs.push(`${player.name}'s Orion swapped the ${swap.type} (tile ${tileId}) with the ${t1.monsterType} (tile ${tileId2})!`);
+        logTurn(game, `${player.name}'s Orion swapped the ${swap.type} (tile ${tileId}) with the ${t1.monsterType} (tile ${tileId2})!`);
       }
 
       // Alcie: turn 1 resource into 3 different resources (Prep phase)
@@ -2047,7 +2137,7 @@ async function startServer() {
         const others = validResources.filter(r => r !== fromResource);
         others.forEach(r => { player[r] = (player[r] || 0) + 1; });
         hero.abilityUsed = true;
-        game.logs.push(`${player.name}'s Alcie converted 1 ${fromResource} into 1 ${others.join(", 1 ")}!`);
+        logTurn(game, `${player.name}'s Alcie converted 1 ${fromResource} into 1 ${others.join(", 1 ")}!`);
       }
 
       // Boff: repair/rebuild a wall on an owned tile for 1 lumber (Prep phase)
@@ -2071,7 +2161,7 @@ async function startServer() {
         boffTile.structure = StructureType.WALL;
         boffTile.isOccupied = true;
         hero.abilityUsed = true;
-        game.logs.push(`${player.name}'s Boff repaired a Wall on tile ${tileId} for 1 Wood!`);
+        logTurn(game, `${player.name}'s Boff repaired a Wall on tile ${tileId} for 1 Wood!`);
       }
 
       // Tess: reveal (log) the health of all monsters in a 3x3 area (Attack phase)
@@ -2101,9 +2191,9 @@ async function startServer() {
         }
         hero.abilityUsed = true;
         if (revealed.length === 0) {
-          game.logs.push(`${player.name}'s Tess scouted the 3x3 area — no monsters found.`);
+          logTurn(game, `${player.name}'s Tess scouted the 3x3 area — no monsters found.`);
         } else {
-          game.logs.push(`${player.name}'s Tess revealed: ${revealed.join(", ")}`);
+          logTurn(game, `${player.name}'s Tess revealed: ${revealed.join(", ")}`);
         }
       }
 
@@ -2123,7 +2213,7 @@ async function startServer() {
       if (gear.abilityUsed) { game.logs.push(`${gear.name}'s ability was already used this round!`); io.to(roomId).emit("game_updated", game); return; }
 
       const isAttack = game.status === Phase.ATTACK;
-      const isPrep   = game.status === Phase.PREPARATION;
+      const isPrep = game.status === Phase.PREPARATION;
       const isMyTurn = game.players[game.currentPlayerIndex]?.id === player.id;
 
       // Helper: get orthogonal neighbors of a tile
@@ -2142,7 +2232,7 @@ async function startServer() {
         if (player.mana < 1) { game.logs.push("Not enough Mana!"); io.to(roomId).emit("game_updated", game); return; }
         player.mana -= 1; player.stone += 2;
         gear.abilityUsed = true;
-        game.logs.push(`${player.name} used Mining Pick: spent 1 Mana, gained 2 Stone.`);
+        logTurn(game, `${player.name} used Mining Pick: spent 1 Mana, gained 2 Stone.`);
       }
 
       // Trowel: 1 Mana → 2 Clay
@@ -2151,7 +2241,7 @@ async function startServer() {
         if (player.mana < 1) { game.logs.push("Not enough Mana!"); io.to(roomId).emit("game_updated", game); return; }
         player.mana -= 1; player.clay += 2;
         gear.abilityUsed = true;
-        game.logs.push(`${player.name} used Trowel: spent 1 Mana, gained 2 Clay.`);
+        logTurn(game, `${player.name} used Trowel: spent 1 Mana, gained 2 Clay.`);
       }
 
       // Lumber Axe: 1 Mana → 3 Wood
@@ -2160,7 +2250,7 @@ async function startServer() {
         if (player.mana < 1) { game.logs.push("Not enough Mana!"); io.to(roomId).emit("game_updated", game); return; }
         player.mana -= 1; player.wood += 3;
         gear.abilityUsed = true;
-        game.logs.push(`${player.name} used Lumber Axe: spent 1 Mana, gained 3 Wood.`);
+        logTurn(game, `${player.name} used Lumber Axe: spent 1 Mana, gained 3 Wood.`);
       }
 
       // Spyglass: peek top 3 hero deck cards (logged)
@@ -2169,9 +2259,9 @@ async function startServer() {
         const top3 = game.heroDeck.slice(-3).reverse().map((c: any) => c.name);
         gear.abilityUsed = true;
         if (top3.length === 0) {
-          game.logs.push(`${player.name} used Spyglass — Hero Deck is empty!`);
+          logTurn(game, `${player.name} used Spyglass — Hero Deck is empty!`);
         } else {
-          game.logs.push(`${player.name} used Spyglass and saw the next ${top3.length} heroes: ${top3.join(", ")}.`);
+          logTurn(game, `${player.name} used Spyglass and saw the next ${top3.length} heroes: ${top3.join(", ")}.`);
         }
       }
 
@@ -2184,8 +2274,8 @@ async function startServer() {
           game.logs.push("Blueprints require a clear owned tile with no existing structure."); io.to(roomId).emit("game_updated", game); return;
         }
         const sType = structureType === "MOAT" ? StructureType.MOAT
-                    : structureType === "BARRACKS" ? StructureType.BARRACKS
-                    : StructureType.WALL;
+          : structureType === "BARRACKS" ? StructureType.BARRACKS
+            : StructureType.WALL;
         // Deduct material costs for the structure (same as normal build)
         if (sType === StructureType.WALL && player.wood < 2) { game.logs.push("Need 2 Wood for a Wall."); io.to(roomId).emit("game_updated", game); return; }
         if (sType === StructureType.BARRACKS && (player.wood < 6 || player.clay < 2)) { game.logs.push("Need 6 Wood + 2 Clay for Barracks."); io.to(roomId).emit("game_updated", game); return; }
@@ -2194,7 +2284,7 @@ async function startServer() {
         bpTile.structure = sType;
         bpTile.isOccupied = true;
         gear.abilityUsed = true;
-        game.logs.push(`${player.name} used Blueprints to build a ${sType} on tile ${tileId} (no action space used)!`);
+        logTurn(game, `${player.name} used Blueprints to build a ${sType} on tile ${tileId} (no action space used)!`);
       }
 
       // Caltrops: deploy on an owned tile — monster reclaims it at -2 HP
@@ -2205,7 +2295,7 @@ async function startServer() {
         if (!caltTile || caltTile.ownerId !== player.id) { game.logs.push("You can only deploy Caltrops on tiles you own."); io.to(roomId).emit("game_updated", game); return; }
         caltTile.caltropsOwnerId = player.id;
         gear.abilityUsed = true;
-        game.logs.push(`${player.name} laid Caltrops on tile ${tileId}! Any monster reclaiming it will start weakened.`);
+        logTurn(game, `${player.name} laid Caltrops on tile ${tileId}! Any monster reclaiming it will start weakened.`);
       }
 
       // ── ATTACK PHASE GEAR ─────────────────────────────────────────────────
@@ -2216,7 +2306,7 @@ async function startServer() {
         if (!isMyTurn) { game.logs.push("It is not your turn."); io.to(roomId).emit("game_updated", game); return; }
         player.hornBuff = true;
         gear.abilityUsed = true;
-        game.logs.push(`${player.name} blew the War Horn! All heroes deal +1 damage this phase.`);
+        logTurn(game, `${player.name} blew the War Horn! All heroes deal +1 damage this phase.`);
       }
 
       // Magic Wand: deal 2 damage to a monster for 1 Mana (uses gear not a hero ability)
@@ -2232,7 +2322,7 @@ async function startServer() {
         player.mana -= 1;
         wandTile.monsterHP -= 2;
         gear.abilityUsed = true;
-        game.logs.push(`${player.name}'s Magic Wand dealt 2 damage to the ${wandTile.monsterType} on tile ${tileId}!`);
+        logTurn(game, `${player.name}'s Magic Wand dealt 2 damage to the ${wandTile.monsterType} on tile ${tileId}!`);
         if (wandTile.monsterHP <= 0) {
           wandTile.monsterType = null; wandTile.monsterHP = 0; wandTile.monsterMaxHP = 0;
           wandTile.ownerId = player.id; wandTile.isOccupied = false;
@@ -2257,7 +2347,7 @@ async function startServer() {
         if (!kAdj) { game.logs.push("Target must be adjacent to your territory."); io.to(roomId).emit("game_updated", game); return; }
         knuckTile.monsterHP -= 2;
         gear.abilityUsed = true;
-        game.logs.push(`${player.name}'s Spiked Knuckles dealt 2 damage to the ${knuckTile.monsterType}!`);
+        logTurn(game, `${player.name}'s Spiked Knuckles dealt 2 damage to the ${knuckTile.monsterType}!`);
         if (knuckTile.monsterHP <= 0) {
           const kMonster = knuckTile.monsterType;
           knuckTile.monsterType = null; knuckTile.monsterHP = 0; knuckTile.monsterMaxHP = 0;
@@ -2284,7 +2374,7 @@ async function startServer() {
         dagTile.poisonRoundsLeft = 2;
         dagTile.poisonOwnerId = player.id;
         gear.abilityUsed = true;
-        game.logs.push(`${player.name}'s Poison Dagger poisoned the ${dagTile.monsterType} on tile ${tileId}! (1 dmg/round for 2 rounds)`);
+        logTurn(game, `${player.name}'s Poison Dagger poisoned the ${dagTile.monsterType} on tile ${tileId}! (1 dmg/round for 2 rounds)`);
       }
 
       // Heavy Crossbow: deal 3 damage to a monster up to 2 tiles away
@@ -2303,7 +2393,7 @@ async function startServer() {
         if (!inRange) { game.logs.push("That monster is out of Crossbow range (max 2 tiles from your territory)."); io.to(roomId).emit("game_updated", game); return; }
         cbTile.monsterHP -= 3;
         gear.abilityUsed = true;
-        game.logs.push(`${player.name}'s Heavy Crossbow dealt 3 damage to the ${cbTile.monsterType} on tile ${tileId}!`);
+        logTurn(game, `${player.name}'s Heavy Crossbow dealt 3 damage to the ${cbTile.monsterType} on tile ${tileId}!`);
         if (cbTile.monsterHP <= 0) {
           const cbM = cbTile.monsterType;
           cbTile.monsterType = null; cbTile.monsterHP = 0; cbTile.monsterMaxHP = 0;
@@ -2346,7 +2436,7 @@ async function startServer() {
           }
         });
         gear.abilityUsed = true;
-        game.logs.push(`${player.name} threw a Fire Bomb at tile ${tileId}!`);
+        logTurn(game, `${player.name} threw a Fire Bomb at tile ${tileId}!`);
       }
 
       // Bribe Letter: pay 5 gems to skip a monster and claim its tile
@@ -2365,7 +2455,7 @@ async function startServer() {
         player.tilesCount++;
         gear.abilityUsed = true;
         // No gemstone reward for bribed tiles, no bonus card — cost is the 5 gems
-        game.logs.push(`${player.name} used Bribe Letter to claim tile ${tileId} by paying 5 gems!`);
+        logTurn(game, `${player.name} used Bribe Letter to claim tile ${tileId} by paying 5 gems!`);
       }
 
       // Monster Bait: move an adjacent monster to another adjacent empty tile
@@ -2388,7 +2478,86 @@ async function startServer() {
         baitDst.monsterType = baitSrc.monsterType; baitDst.monsterHP = baitSrc.monsterHP; baitDst.monsterMaxHP = baitSrc.monsterMaxHP;
         baitSrc.monsterType = null; baitSrc.monsterHP = 0; baitSrc.monsterMaxHP = 0;
         gear.abilityUsed = true;
-        game.logs.push(`${player.name} used Monster Bait to move the monster from tile ${tileId} to tile ${dest}!`);
+        logTurn(game, `${player.name} used Monster Bait to move the monster from tile ${tileId} to tile ${dest}!`);
+      }
+
+      // Lance: deal 3 damage to a monster if a hero moved into (occupied) its tile this turn
+      else if (gear.id === "g_lance") {
+        if (!isAttack) { game.logs.push("Lance can only be used in the Attack phase."); io.to(roomId).emit("game_updated", game); return; }
+        if (!isMyTurn) { game.logs.push("It is not your turn."); io.to(roomId).emit("game_updated", game); return; }
+        if (tileId === undefined || tileId === null) { game.logs.push("Select the monster tile your hero just moved into."); io.to(roomId).emit("game_updated", game); return; }
+        const lanceTile = game.board[tileId];
+        if (!lanceTile || lanceTile.monsterType === null) { game.logs.push("Lance requires a monster tile."); io.to(roomId).emit("game_updated", game); return; }
+        // Tile must be adjacent to the player's territory (hero moving in)
+        const lAdj = nbrs(tileId).some(n => game.board[n].ownerId === player.id);
+        if (!lAdj) { game.logs.push("Target must be adjacent to your territory."); io.to(roomId).emit("game_updated", game); return; }
+        lanceTile.monsterHP -= 3;
+        gear.abilityUsed = true;
+        logTurn(game, `${player.name}'s Lance charged — 3 damage to the ${lanceTile.monsterType} on tile ${tileId}!`);
+        if (lanceTile.monsterHP <= 0) {
+          const lName = lanceTile.monsterType;
+          lanceTile.monsterType = null; lanceTile.monsterHP = 0; lanceTile.monsterMaxHP = 0;
+          lanceTile.ownerId = player.id; lanceTile.isOccupied = false;
+          player.tilesCount++; player.gemstones += 3;
+          player.monstersDefeatedThisAttack = (player.monstersDefeatedThisAttack || 0) + 1;
+          if (player.monstersDefeatedThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck?.length > 0) {
+            player.bonusCards.push(game.bonusDeck.pop()); player.earnedBonusThisAttack = true;
+            game.logs.push(`${player.name} earned a Bonus Card!`);
+          }
+          game.logs.push(`${player.name}'s Lance defeated the ${lName} and claimed tile ${tileId}!`);
+        }
+      }
+
+      // Ballista: deal 2 damage to any monster in line-of-sight from a wall tile
+      else if (gear.id === "g_ballista") {
+        if (!isAttack) { game.logs.push("Ballista can only be used in the Attack phase."); io.to(roomId).emit("game_updated", game); return; }
+        if (!isMyTurn) { game.logs.push("It is not your turn."); io.to(roomId).emit("game_updated", game); return; }
+        if (tileId === undefined || tileId === null) { game.logs.push("Select the monster tile to shoot."); io.to(roomId).emit("game_updated", game); return; }
+        const balTile = game.board[tileId];
+        if (!balTile || balTile.monsterType === null) { game.logs.push("Ballista targets a monster tile."); io.to(roomId).emit("game_updated", game); return; }
+        // Check: player must own at least one wall tile that has line-of-sight (same row or col) to the target
+        const balTx = tileId % 9, balTy = Math.floor(tileId / 9);
+        const hasWallLOS = game.board.some((t: any) => {
+          if (t.ownerId !== player.id || t.structure !== StructureType.WALL) return false;
+          const wx = t.id % 9, wy = Math.floor(t.id / 9);
+          return wx === balTx || wy === balTy; // same column or same row
+        });
+        if (!hasWallLOS) { game.logs.push("Ballista requires a wall tile with line-of-sight (same row or column) to the target."); io.to(roomId).emit("game_updated", game); return; }
+        balTile.monsterHP -= 2;
+        gear.abilityUsed = true;
+        logTurn(game, `${player.name}'s Ballista fired — 2 damage to the ${balTile.monsterType} on tile ${tileId}!`);
+        if (balTile.monsterHP <= 0) {
+          const balName = balTile.monsterType;
+          balTile.monsterType = null; balTile.monsterHP = 0; balTile.monsterMaxHP = 0;
+          balTile.ownerId = player.id; balTile.isOccupied = false;
+          player.tilesCount++; player.gemstones += 3;
+          player.monstersDefeatedThisAttack = (player.monstersDefeatedThisAttack || 0) + 1;
+          if (player.monstersDefeatedThisAttack >= 3 && !player.earnedBonusThisAttack && game.bonusDeck?.length > 0) {
+            player.bonusCards.push(game.bonusDeck.pop()); player.earnedBonusThisAttack = true;
+            game.logs.push(`${player.name} earned a Bonus Card!`);
+          }
+          game.logs.push(`${player.name}'s Ballista defeated the ${balName} and claimed tile ${tileId}!`);
+        }
+      }
+
+      // Pouch of Holding: carry over up to 5 unused Mana to next round
+      // Passive — triggers automatically at round-end in advanceTurn. Clicking activates it for reminder only.
+      else if (gear.id === "g_pouch") {
+        // Mark as acknowledged — actual capping is enforced in advanceTurn
+        logTurn(game, `${player.name} has a Pouch of Holding — up to 5 Mana will carry over to the next round.`);
+        gear.abilityUsed = true;
+      }
+
+      // Plated Boots: passive — enables Occupy on moat tiles. No active activation needed.
+      else if (gear.id === "g_boots") {
+        logTurn(game, `${player.name}'s Plated Boots are equipped — your heroes can occupy Moat tiles.`);
+        // No abilityUsed flag — it's a passive perk, not a one-time use
+      }
+
+      // Tower Shield: passive — protects occupying hero from Dragon/Demon effects. No active activation.
+      else if (gear.id === "g_shield") {
+        logTurn(game, `${player.name}'s Tower Shield is equipped — the occupying hero is protected from Dragon/Demon effects.`);
+        // No abilityUsed flag — passive protection
       }
 
       else {
